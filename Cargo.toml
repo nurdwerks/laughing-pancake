@@ -1,0 +1,10 @@
+[package]
+name = "rust-chess-tui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+shakmaty = "0.29.3"
+ratatui = { version = "0.26.2", features = ["crossterm"] }
+crossterm = "0.27.0"
+rand = "0.8.5"
