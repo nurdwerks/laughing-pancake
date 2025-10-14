@@ -50,6 +50,17 @@ const BISHOP_VALUE: i32 = 330;
 const ROOK_VALUE: i32 = 500;
 const QUEEN_VALUE: i32 = 900;
 
+pub fn get_piece_value(role: Role) -> i32 {
+    match role {
+        Role::Pawn => PAWN_VALUE,
+        Role::Knight => KNIGHT_VALUE,
+        Role::Bishop => BISHOP_VALUE,
+        Role::Rook => ROOK_VALUE,
+        Role::Queen => QUEEN_VALUE,
+        Role::King => 0,
+    }
+}
+
 /// Evaluates the board from the perspective of the current player.
 ///
 /// Returns a score in centipawns.
