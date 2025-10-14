@@ -1,5 +1,7 @@
 // game/mod.rs
 
+pub mod evaluation;
+
 use pgn_reader::{Reader, Visitor, SanPlus};
 use shakmaty::{Chess, Position, Move, Color};
 use shakmaty::uci::UciMove;
@@ -184,14 +186,39 @@ impl GameState {
             }
         }
 
-        // Fallback to random move if tablebase is not available or doesn't provide a move
+        // Fallback to evaluation if no other move is found
         let legal_moves = self.get_legal_moves();
         if legal_moves.is_empty() {
+            return None;
+        }
+
+        let mut best_score = i32::MIN;
+        let mut best_moves = Vec::new();
+
+        for m in legal_moves {
+            let mut new_pos = self.chess.clone();
+            new_pos.play_unchecked(m);
+
+            // The evaluate function returns the score from the perspective of the current player.
+            // Since the move has been made, the board's turn has switched to the opponent.
+            // So, we need to negate the score to get it from the perspective of the player making the move.
+            let score = -evaluation::evaluate(&new_pos);
+
+            if score > best_score {
+                best_score = score;
+                best_moves.clear();
+                best_moves.push(m);
+            } else if score == best_score {
+                best_moves.push(m);
+            }
+        }
+
+        if best_moves.is_empty() {
             None
         } else {
             let mut rng = rand::thread_rng();
-            let random_index = rng.gen_range(0..legal_moves.len());
-            Some(legal_moves[random_index].clone())
+            let random_index = rng.gen_range(0..best_moves.len());
+            Some(best_moves[random_index].clone())
         }
     }
 }
