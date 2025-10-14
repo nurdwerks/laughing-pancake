@@ -1,19 +1,66 @@
 // game/mod.rs
 
+use pgn_reader::{Reader, Visitor, SanPlus};
 use shakmaty::{Chess, Position, Move, Color};
 use shakmaty::uci::UciMove;
 use shakmaty::san::San;
 use rand::Rng;
 use shakmaty_syzygy::{Tablebase, Wdl};
+use shakmaty::zobrist::{ZobristHash, Zobrist64};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufReader;
+use std::ops::ControlFlow;
+
+struct BookBuilder {
+    book: HashMap<Zobrist64, Vec<Move>>,
+    board: Chess,
+}
+
+impl Visitor for BookBuilder {
+    type Tags = ();
+    type Movetext = ();
+    type Output = HashMap<Zobrist64, Vec<Move>>;
+
+    fn begin_tags(&mut self) -> ControlFlow<Self::Output, Self::Tags> {
+        ControlFlow::Continue(())
+    }
+
+    fn begin_movetext(&mut self, _tags: Self::Tags) -> ControlFlow<Self::Output, Self::Movetext> {
+        self.board = Chess::default();
+        ControlFlow::Continue(())
+    }
+
+    fn san(&mut self, _movetext: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
+        let hash = self.board.zobrist_hash(shakmaty::EnPassantMode::Legal);
+        if let Ok(m) = san_plus.san.to_move(&self.board) {
+            self.book.entry(hash).or_insert_with(Vec::new).push(m);
+            if let Ok(new_board) = self.board.clone().play(m) {
+                self.board = new_board;
+            } else {
+                return ControlFlow::Break(self.book.clone());
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn end_game(&mut self, _movetext: Self::Movetext) -> Self::Output {
+        self.book.clone()
+    }
+}
 
 pub struct GameState {
     pub chess: Chess,
     pgn: String,
     tablebase: Option<Tablebase<Chess>>,
+    opening_book: Option<HashMap<Zobrist64, Vec<Move>>>,
 }
 
 impl GameState {
-    pub fn new(tablebase_path: Option<String>) -> (Self, Option<String>) {
+    pub fn new(
+        tablebase_path: Option<String>,
+        opening_book_path: Option<String>,
+    ) -> (Self, Option<String>) {
         let mut tablebase = None;
         let mut warning = None;
 
@@ -28,11 +75,33 @@ impl GameState {
             }
         }
 
+        let opening_book = if let Some(path) = opening_book_path {
+            match File::open(&path) {
+                Ok(file) => {
+                    let reader = BufReader::new(file);
+                    let mut builder = BookBuilder {
+                        book: HashMap::new(),
+                        board: Chess::default(),
+                    };
+                    let mut reader = Reader::new(reader);
+                    let _ = reader.read_game(&mut builder);
+                    Some(builder.book)
+                }
+                Err(_) => {
+                    warning = Some(format!("Could not load opening book: {}", path));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         (
             Self {
                 chess: Chess::default(),
                 pgn: String::new(),
                 tablebase,
+                opening_book,
             },
             warning,
         )
@@ -66,6 +135,17 @@ impl GameState {
     }
 
     pub fn get_ai_move(&self) -> Option<Move> {
+        if let Some(book) = &self.opening_book {
+            let hash = self.chess.zobrist_hash(shakmaty::EnPassantMode::Legal);
+            if let Some(moves) = book.get(&hash) {
+                if !moves.is_empty() {
+                    let mut rng = rand::thread_rng();
+                    let random_index = rng.gen_range(0..moves.len());
+                    return Some(moves[random_index]);
+                }
+            }
+        }
+
         if let Some(tb) = &self.tablebase {
             let legal_moves = self.get_legal_moves();
             let mut winning_moves = Vec::new();
