@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 shakmaty = "0.29.3"
+shakmaty-syzygy = "0.27.0"
 ratatui = { version = "0.26.2", features = ["crossterm"] }
 crossterm = "0.27.0"
 rand = "0.8.5"
+clap = { version = "4.5.49", features = ["derive"] }

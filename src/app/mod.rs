@@ -24,17 +24,20 @@ pub struct App {
     pub error_message: Option<String>,
     pub game_mode: GameMode,
     pub game_result: Option<String>,
+    pub tablebase_path: Option<String>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(tablebase_path: Option<String>) -> Self {
+        let (game_state, warning) = GameState::new(tablebase_path.clone());
         Self {
-            game_state: GameState::new(),
+            game_state,
             should_quit: false,
             user_input: String::new(),
-            error_message: None,
+            error_message: warning,
             game_mode: GameMode::PlayerVsAi,
             game_result: None,
+            tablebase_path,
         }
     }
 
@@ -55,7 +58,7 @@ impl App {
                 };
 
                 if is_ai_turn {
-                    if let Some(ai_move) = self.game_state.get_random_move() {
+                    if let Some(ai_move) = self.game_state.get_ai_move() {
                         let uci_move = ai_move.to_uci(self.game_state.chess.castles().mode());
                         self.game_state.make_move(&uci_move);
                         thread::sleep(Duration::from_millis(500));
@@ -79,9 +82,10 @@ impl App {
                                 GameMode::PlayerVsAi => GameMode::AiVsAi,
                                 GameMode::AiVsAi => GameMode::PlayerVsAi,
                             };
-                            self.game_state = GameState::new();
+                            let (game_state, warning) = GameState::new(self.tablebase_path.clone());
+                            self.game_state = game_state;
                             self.user_input.clear();
-                            self.error_message = None;
+                            self.error_message = warning;
                             self.game_result = None;
                         }
                         KeyCode::Char(c) => {
