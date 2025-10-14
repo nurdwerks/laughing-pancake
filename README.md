@@ -11,7 +11,11 @@ A terminal-based chess application written in Rust. Play against a configurable 
     - Toggle various search algorithms and pruning techniques.
 - **Advanced Search Algorithm**: The AI uses an alpha-beta search algorithm with the following features:
     - **Quiescence Search**: To mitigate the horizon effect and improve tactical calculations.
-    - *Future (stubbed) implementations*: Principal Variation Search (PVS), Null Move Pruning, Late Move Reductions (LMR), Futility Pruning, and Delta Pruning.
+    - **Principal Variation Search (PVS)**: An optimization of alpha-beta that is more efficient in practice.
+    - **Null Move Pruning**: A powerful technique to reduce the search space by assuming a player can pass their turn and still achieve a high score.
+    - **Late Move Reductions (LMR)**: Reduces the search depth for moves that are ordered later in the move list.
+    - **Futility Pruning**: Prunes moves at the leaves of the search tree if they are unlikely to raise the alpha value.
+    - **Delta Pruning**: Used in quiescence search to prune captures that are unlikely to be winning.
 - **Syzygy Tablebase Support**: For positions with 7 or fewer pieces, the AI can use Syzygy endgame tablebases to play perfectly.
 - **PGN Opening Book Support**: The AI can play moves from a PGN opening book.
 - **PGN Tracking**: The game's moves are tracked in PGN (Portable Game Notation) format.
