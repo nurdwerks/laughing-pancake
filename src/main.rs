@@ -18,6 +18,10 @@ struct Args {
     /// Path to the syzygy tablebase files
     #[arg(long)]
     tablebase_path: Option<String>,
+
+    /// Path to the PGN opening book file
+    #[arg(long)]
+    opening_book: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -31,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let mut app = App::new(args.tablebase_path);
+    let mut app = App::new(args.tablebase_path, args.opening_book);
     let res = app.run(&mut terminal);
 
     // restore terminal

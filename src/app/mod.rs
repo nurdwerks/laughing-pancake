@@ -25,11 +25,12 @@ pub struct App {
     pub game_mode: GameMode,
     pub game_result: Option<String>,
     pub tablebase_path: Option<String>,
+    pub opening_book_path: Option<String>,
 }
 
 impl App {
-    pub fn new(tablebase_path: Option<String>) -> Self {
-        let (game_state, warning) = GameState::new(tablebase_path.clone());
+    pub fn new(tablebase_path: Option<String>, opening_book_path: Option<String>) -> Self {
+        let (game_state, warning) = GameState::new(tablebase_path.clone(), opening_book_path.clone());
         Self {
             game_state,
             should_quit: false,
@@ -38,6 +39,7 @@ impl App {
             game_mode: GameMode::PlayerVsAi,
             game_result: None,
             tablebase_path,
+            opening_book_path,
         }
     }
 
@@ -82,7 +84,10 @@ impl App {
                                 GameMode::PlayerVsAi => GameMode::AiVsAi,
                                 GameMode::AiVsAi => GameMode::PlayerVsAi,
                             };
-                            let (game_state, warning) = GameState::new(self.tablebase_path.clone());
+                            let (game_state, warning) = GameState::new(
+                                self.tablebase_path.clone(),
+                                self.opening_book_path.clone(),
+                            );
                             self.game_state = game_state;
                             self.user_input.clear();
                             self.error_message = warning;
