@@ -6,6 +6,9 @@ pub mod mobility;
 pub mod king_safety;
 pub mod development;
 pub mod see;
+pub mod rooks;
+pub mod bishops;
+pub mod knights;
 
 use shakmaty::{Board, Chess, Color, Piece, Position, Role};
 
@@ -120,6 +123,15 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
     white_score += development::evaluate(board, Color::White) * config.piece_development_weight / 100;
     black_score += development::evaluate(board, Color::Black) * config.piece_development_weight / 100;
 
+    white_score += rooks::evaluate(board, Color::White) * config.rook_placement_weight / 100;
+    black_score += rooks::evaluate(board, Color::Black) * config.rook_placement_weight / 100;
+
+    white_score += bishops::evaluate(board, Color::White) * config.bishop_placement_weight / 100;
+    black_score += bishops::evaluate(board, Color::Black) * config.bishop_placement_weight / 100;
+
+    white_score += knights::evaluate(board, Color::White) * config.knight_placement_weight / 100;
+    black_score += knights::evaluate(board, Color::Black) * config.knight_placement_weight / 100;
+
     let total_score = white_score - black_score;
 
     // Return score from the perspective of the current player
@@ -131,58 +143,4 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::game::search::SearchConfig;
-    use shakmaty::{fen::Fen, CastlingMode, Position};
-
-    #[test]
-    fn test_game_phase_starting_position() {
-        let pos = Chess::default();
-        assert_eq!(game_phase(pos.board()), 256);
-    }
-
-    #[test]
-    fn test_game_phase_endgame() {
-        let fen: Fen = "8/4k3/8/8/8/8/4K3/8 w - - 0 1".parse().unwrap();
-        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-        assert_eq!(game_phase(pos.board()), 0);
-    }
-
-    #[test]
-    fn test_evaluate_starting_position() {
-        let pos = Chess::default();
-        let config = SearchConfig::default();
-        let score = evaluate(&pos, &config);
-        // The score is not exactly 0 because of the PSTs and other eval terms.
-        // A wider range might be needed. Let's check for a reasonable score.
-        assert!(score > -50 && score < 50);
-    }
-
-    #[test]
-    fn test_evaluate_white_advantage() {
-        let fen: Fen = "4k3/8/8/8/8/8/8/4K2Q w - - 0 1".parse().unwrap();
-        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-        let config = SearchConfig::default();
-        let score = evaluate(&pos, &config);
-        assert!(score > 850);
-    }
-
-    #[test]
-    fn test_evaluate_black_advantage() {
-        let fen: Fen = "4k2q/8/8/8/8/8/8/4K3 w - - 0 1".parse().unwrap();
-        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-        let config = SearchConfig::default();
-        let score = evaluate(&pos, &config);
-        assert!(score < -850);
-    }
-
-    #[test]
-    fn test_evaluate_black_advantage_black_to_move() {
-        let fen: Fen = "4k2q/8/8/8/8/8/8/4K3 b - - 0 1".parse().unwrap();
-        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-        let config = SearchConfig::default();
-        let score = evaluate(&pos, &config);
-        assert!(score > 850);
-    }
-}
+pub mod tests;
