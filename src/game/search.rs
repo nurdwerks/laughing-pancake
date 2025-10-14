@@ -22,6 +22,10 @@ pub struct SearchConfig {
     pub use_lmr: bool,
     pub use_futility_pruning: bool,
     pub use_delta_pruning: bool,
+    pub pawn_structure_weight: i32,
+    pub piece_mobility_weight: i32,
+    pub king_safety_weight: i32,
+    pub piece_development_weight: i32,
 }
 
 impl Default for SearchConfig {
@@ -33,6 +37,10 @@ impl Default for SearchConfig {
             use_lmr: false,
             use_futility_pruning: false,
             use_delta_pruning: false,
+            pawn_structure_weight: 100,
+            piece_mobility_weight: 100,
+            king_safety_weight: 100,
+            piece_development_weight: 100,
         }
     }
 }
@@ -45,7 +53,7 @@ pub fn search(pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i
     let legal_moves = pos.legal_moves();
 
     if legal_moves.is_empty() {
-        return (None, evaluation::evaluate(pos));
+        return (None, evaluation::evaluate(pos, config));
     }
 
     for m in legal_moves {
@@ -77,9 +85,9 @@ fn alpha_beta(pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config
 
     if depth == 0 {
         if config.use_quiescence_search {
-            return quiescence::search(pos, alpha, beta);
+            return quiescence::search(pos, alpha, beta, config);
         }
-        return evaluation::evaluate(pos);
+        return evaluation::evaluate(pos, config);
     }
 
     for m in legal_moves {

@@ -16,6 +16,12 @@ A terminal-based chess application written in Rust. Play against a configurable 
 - **PGN Opening Book Support**: The AI can play moves from a PGN opening book.
 - **PGN Tracking**: The game's moves are tracked in PGN (Portable Game Notation) format.
 - **TUI Interface**: A simple and intuitive terminal user interface built with `ratatui`.
+- **Advanced Evaluation**: The AI's evaluation function includes several advanced features:
+    - **Pawn Structure**: Penalizes doubled, isolated, and backward pawns, and rewards passed pawns.
+    - **Piece Mobility**: Rewards pieces for having more available moves.
+    - **King Safety**: Analyzes the pawn shield around the king and penalizes for open files.
+    - **Piece Development**: Encourages the development of minor pieces and penalizes moving the queen too early.
+    - **Static Exchange Evaluation (SEE)**: Used in quiescence search to prune losing captures.
 
 ## Dependencies
 
@@ -56,8 +62,9 @@ A terminal-based chess application written in Rust. Play against a configurable 
 ### AI Configuration Screen
 
 - **Up/Down Arrows**: Navigate the list of profiles.
+- **'k'/'j'**: Navigate the list of AI settings on the right.
+- **'h'/'l'**: Adjust the value of the selected setting.
 - **Enter**: Load the selected profile. The screen will close, and the AI will use the new settings.
-- **Spacebar**: Toggle the selected search parameter (e.g., enable/disable Quiescence Search).
 - **'s'**: Save the current settings to the selected profile.
 - **'c' or Esc**: Close the configuration screen without loading a new profile.
 
