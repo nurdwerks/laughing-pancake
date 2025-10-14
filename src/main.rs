@@ -3,6 +3,7 @@ mod ui;
 mod game;
 
 use app::App;
+use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -11,7 +12,17 @@ use crossterm::{
 use ratatui::{prelude::*, Terminal};
 use std::{error::Error, io};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Path to the syzygy tablebase files
+    #[arg(long)]
+    tablebase_path: Option<String>,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -20,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let mut app = App::new();
+    let mut app = App::new(args.tablebase_path);
     let res = app.run(&mut terminal);
 
     // restore terminal
