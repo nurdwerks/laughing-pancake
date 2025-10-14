@@ -3,21 +3,80 @@
 use crate::app::App;
 use ratatui::{
     prelude::*,
-    style::{Color, Style},
-    widgets::{Block, Borders, Paragraph},
+    style::{Color, Style, Modifier},
+    widgets::{Block, Borders, Paragraph, List, ListItem},
 };
 use shakmaty::{File, Piece, Position, Rank, Role, Square};
 use std::str::FromStr;
 
 pub fn draw(frame: &mut Frame, app: &App) {
+    if app.show_ai_config {
+        draw_config_screen(frame, app);
+    } else {
+        let main_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+            .split(frame.size());
+
+        draw_board(frame, main_layout[0], app);
+        draw_game_info(frame, main_layout[1], app);
+    }
+}
+
+fn draw_config_screen(frame: &mut Frame, app: &App) {
     let main_layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
         .split(frame.size());
 
-    draw_board(frame, main_layout[0], app);
-    draw_game_info(frame, main_layout[1], app);
+    // Draw profile list
+    let profiles: Vec<ListItem> = app.profiles
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let style = if i == app.selected_profile_index {
+                Style::default().add_modifier(Modifier::BOLD).bg(Color::Gray)
+            } else {
+                Style::default()
+            };
+            ListItem::new(name.as_str()).style(style)
+        })
+        .collect();
+
+    let profiles_list = List::new(profiles)
+        .block(Block::default().borders(Borders::ALL).title("Profiles"))
+        .highlight_style(Style::default().add_modifier(Modifier::BOLD))
+        .highlight_symbol("> ");
+    frame.render_widget(profiles_list, main_layout[0]);
+
+    // Draw config details
+    let config = &app.current_search_config;
+    let mut config_text = vec![
+        Line::from(Span::styled("Current Configuration", Style::default().bold())),
+        Line::from(format!("Quiescence Search: {}", config.use_quiescence_search)),
+        Line::from(format!("PVS: {}", config.use_pvs)),
+        Line::from(format!("Null Move Pruning: {}", config.use_null_move_pruning)),
+        Line::from(format!("LMR: {}", config.use_lmr)),
+        Line::from(format!("Futility Pruning: {}", config.use_futility_pruning)),
+        Line::from(format!("Delta Pruning: {}", config.use_delta_pruning)),
+        Line::from(""),
+        Line::from(Span::styled("Controls:", Style::default().bold())),
+        Line::from("Up/Down: Navigate profiles"),
+        Line::from("Enter: Load profile"),
+        Line::from("Space: Toggle Quiescence (example)"),
+        Line::from("'s': Save to selected profile"),
+        Line::from("'c' or Esc: Close"),
+    ];
+
+    if let Some(error) = &app.error_message {
+        config_text.push(Line::from(Span::styled(error, Style::default().fg(Color::Red))));
+    }
+
+    let config_widget = Paragraph::new(config_text)
+        .block(Block::default().borders(Borders::ALL).title("AI Settings"));
+    frame.render_widget(config_widget, main_layout[1]);
 }
+
 
 fn draw_board(frame: &mut Frame, area: Rect, app: &App) {
     let board = app.game_state.chess.board();

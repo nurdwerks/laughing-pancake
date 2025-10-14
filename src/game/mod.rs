@@ -1,6 +1,7 @@
 // game/mod.rs
 
 pub mod evaluation;
+pub mod search;
 
 use pgn_reader::{Reader, Visitor, SanPlus};
 use shakmaty::{Chess, Position, Move, Color};
@@ -13,6 +14,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::ops::ControlFlow;
+use self::search::SearchConfig;
 
 struct BookBuilder {
     book: HashMap<Zobrist64, Vec<Move>>,
@@ -56,6 +58,7 @@ pub struct GameState {
     pgn: String,
     tablebase: Option<Tablebase<Chess>>,
     opening_book: Option<HashMap<Zobrist64, Vec<Move>>>,
+    pub search_config: SearchConfig,
 }
 
 impl GameState {
@@ -104,6 +107,7 @@ impl GameState {
                 pgn: String::new(),
                 tablebase,
                 opening_book,
+                search_config: SearchConfig::default(),
             },
             warning,
         )
@@ -186,39 +190,8 @@ impl GameState {
             }
         }
 
-        // Fallback to evaluation if no other move is found
-        let legal_moves = self.get_legal_moves();
-        if legal_moves.is_empty() {
-            return None;
-        }
-
-        let mut best_score = i32::MIN;
-        let mut best_moves = Vec::new();
-
-        for m in legal_moves {
-            let mut new_pos = self.chess.clone();
-            new_pos.play_unchecked(m);
-
-            // The evaluate function returns the score from the perspective of the current player.
-            // Since the move has been made, the board's turn has switched to the opponent.
-            // So, we need to negate the score to get it from the perspective of the player making the move.
-            let score = -evaluation::evaluate(&new_pos);
-
-            if score > best_score {
-                best_score = score;
-                best_moves.clear();
-                best_moves.push(m);
-            } else if score == best_score {
-                best_moves.push(m);
-            }
-        }
-
-        if best_moves.is_empty() {
-            None
-        } else {
-            let mut rng = rand::thread_rng();
-            let random_index = rng.gen_range(0..best_moves.len());
-            Some(best_moves[random_index].clone())
-        }
+        // Fallback to the new search function
+        let (best_move, _) = search::search(&self.chess, 2, &self.search_config);
+        best_move
     }
 }

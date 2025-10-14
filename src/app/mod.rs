@@ -1,6 +1,7 @@
 // app/mod.rs
 
-use crate::game::GameState;
+use crate::config;
+use crate::game::{search::SearchConfig, GameState};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{prelude::*, Terminal};
@@ -26,11 +27,24 @@ pub struct App {
     pub game_result: Option<String>,
     pub tablebase_path: Option<String>,
     pub opening_book_path: Option<String>,
+    // AI configuration state
+    pub show_ai_config: bool,
+    pub profiles: Vec<String>,
+    pub selected_profile_index: usize,
+    pub current_search_config: SearchConfig,
 }
 
 impl App {
     pub fn new(tablebase_path: Option<String>, opening_book_path: Option<String>) -> Self {
         let (game_state, warning) = GameState::new(tablebase_path.clone(), opening_book_path.clone());
+        let profiles = config::get_profiles().unwrap_or_else(|_| vec!["default".to_string()]);
+        let default_config = SearchConfig::default();
+
+        // Ensure the default profile exists
+        if !profiles.contains(&"default".to_string()) {
+            let _ = config::save_profile("default", &default_config);
+        }
+
         Self {
             game_state,
             should_quit: false,
@@ -40,6 +54,10 @@ impl App {
             game_result: None,
             tablebase_path,
             opening_book_path,
+            show_ai_config: false,
+            profiles,
+            selected_profile_index: 0,
+            current_search_config: default_config,
         }
     }
 
@@ -75,41 +93,48 @@ impl App {
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == event::KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            self.should_quit = true;
-                        }
-                        KeyCode::Char('s') => {
-                            self.game_mode = match self.game_mode {
-                                GameMode::PlayerVsAi => GameMode::AiVsAi,
-                                GameMode::AiVsAi => GameMode::PlayerVsAi,
-                            };
-                            let (game_state, warning) = GameState::new(
-                                self.tablebase_path.clone(),
-                                self.opening_book_path.clone(),
-                            );
-                            self.game_state = game_state;
-                            self.user_input.clear();
-                            self.error_message = warning;
-                            self.game_result = None;
-                        }
-                        KeyCode::Char(c) => {
-                            if self.game_mode == GameMode::PlayerVsAi {
-                                self.user_input.push(c);
-                                self.error_message = None;
+                    if self.show_ai_config {
+                        self.handle_config_events(key.code);
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') => {
+                                self.should_quit = true;
                             }
-                        }
-                        KeyCode::Backspace => {
-                            if self.game_mode == GameMode::PlayerVsAi {
-                                self.user_input.pop();
+                            KeyCode::Char('c') => {
+                                self.show_ai_config = true;
                             }
-                        }
-                        KeyCode::Enter => {
-                            if self.game_mode == GameMode::PlayerVsAi {
-                                self.handle_move_input();
+                            KeyCode::Char('s') => {
+                                self.game_mode = match self.game_mode {
+                                    GameMode::PlayerVsAi => GameMode::AiVsAi,
+                                    GameMode::AiVsAi => GameMode::PlayerVsAi,
+                                };
+                                let (game_state, warning) = GameState::new(
+                                    self.tablebase_path.clone(),
+                                    self.opening_book_path.clone(),
+                                );
+                                self.game_state = game_state;
+                                self.user_input.clear();
+                                self.error_message = warning;
+                                self.game_result = None;
                             }
+                            KeyCode::Char(c) => {
+                                if self.game_mode == GameMode::PlayerVsAi {
+                                    self.user_input.push(c);
+                                    self.error_message = None;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if self.game_mode == GameMode::PlayerVsAi {
+                                    self.user_input.pop();
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if self.game_mode == GameMode::PlayerVsAi {
+                                    self.handle_move_input();
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             }
@@ -147,5 +172,48 @@ impl App {
             }
             Outcome::Unknown => None,
         };
+    }
+
+    fn handle_config_events(&mut self, key_code: KeyCode) {
+        match key_code {
+            KeyCode::Char('c') | KeyCode::Esc => {
+                self.show_ai_config = false;
+            }
+            KeyCode::Up => {
+                if self.selected_profile_index > 0 {
+                    self.selected_profile_index -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if self.selected_profile_index < self.profiles.len() - 1 {
+                    self.selected_profile_index += 1;
+                }
+            }
+            KeyCode::Enter => {
+                let profile_name = &self.profiles[self.selected_profile_index];
+                if let Ok(config) = config::load_profile(profile_name) {
+                    self.current_search_config = config;
+                    self.game_state.search_config = self.current_search_config.clone();
+                    self.show_ai_config = false;
+                } else {
+                    self.error_message = Some(format!("Failed to load profile: {}", profile_name));
+                }
+            }
+            KeyCode::Char(' ') => {
+                // This is where you would toggle the boolean fields.
+                // For simplicity, we'll just toggle quiescence for now.
+                self.current_search_config.use_quiescence_search =
+                    !self.current_search_config.use_quiescence_search;
+            }
+            KeyCode::Char('s') => {
+                let profile_name = &self.profiles[self.selected_profile_index];
+                if config::save_profile(profile_name, &self.current_search_config).is_ok() {
+                    self.error_message = Some(format!("Profile saved: {}", profile_name));
+                } else {
+                    self.error_message = Some(format!("Failed to save profile: {}", profile_name));
+                }
+            }
+            _ => {}
+        }
     }
 }
