@@ -202,7 +202,7 @@ impl App {
                 }
             }
             KeyCode::Char('j') => {
-                self.selected_config_line = (self.selected_config_line + 1).min(9);
+                self.selected_config_line = (self.selected_config_line + 1).min(12);
             }
             KeyCode::Char('k') => {
                 if self.selected_config_line > 0 {
@@ -236,6 +236,9 @@ impl App {
             7 => config.piece_mobility_weight = if increase { (config.piece_mobility_weight + 10).min(200) } else { (config.piece_mobility_weight - 10).max(0) },
             8 => config.king_safety_weight = if increase { (config.king_safety_weight + 10).min(200) } else { (config.king_safety_weight - 10).max(0) },
             9 => config.piece_development_weight = if increase { (config.piece_development_weight + 10).min(200) } else { (config.piece_development_weight - 10).max(0) },
+            10 => config.rook_placement_weight = if increase { (config.rook_placement_weight + 10).min(200) } else { (config.rook_placement_weight - 10).max(0) },
+            11 => config.bishop_placement_weight = if increase { (config.bishop_placement_weight + 10).min(200) } else { (config.bishop_placement_weight - 10).max(0) },
+            12 => config.knight_placement_weight = if increase { (config.knight_placement_weight + 10).min(200) } else { (config.knight_placement_weight - 10).max(0) },
             _ => {}
         }
     }

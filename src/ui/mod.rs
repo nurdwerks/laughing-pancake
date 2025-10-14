@@ -62,6 +62,9 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
         format!("Piece Mobility Weight: {}", config.piece_mobility_weight),
         format!("King Safety Weight: {}", config.king_safety_weight),
         format!("Piece Development Weight: {}", config.piece_development_weight),
+        format!("Rook Placement Weight: {}", config.rook_placement_weight),
+        format!("Bishop Placement Weight: {}", config.bishop_placement_weight),
+        format!("Knight Placement Weight: {}", config.knight_placement_weight),
     ];
 
     let mut config_text = vec![Line::from(Span::styled(

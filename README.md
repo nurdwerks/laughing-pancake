@@ -22,6 +22,9 @@ A terminal-based chess application written in Rust. Play against a configurable 
     - **King Safety**: Analyzes the pawn shield around the king and penalizes for open files.
     - **Piece Development**: Encourages the development of minor pieces and penalizes moving the queen too early.
     - **Static Exchange Evaluation (SEE)**: Used in quiescence search to prune losing captures.
+    - **Rook Placement**: Rewards rooks for being on open and semi-open files, and for reaching the 7th rank.
+    - **Bishop Placement**: Provides a bonus for the bishop pair and penalizes "bad" bishops that are blocked by their own pawns.
+    - **Knight Placement**: Rewards knights for being on outposts and being centralized.
 
 ## Dependencies
 
@@ -63,7 +66,7 @@ A terminal-based chess application written in Rust. Play against a configurable 
 
 - **Up/Down Arrows**: Navigate the list of profiles.
 - **'k'/'j'**: Navigate the list of AI settings on the right.
-- **'h'/'l'**: Adjust the value of the selected setting.
+- **'h'/'l'**: Adjust the value of the selected setting. All evaluation weights are percentages, so a value of 100 is the default.
 - **Enter**: Load the selected profile. The screen will close, and the AI will use the new settings.
 - **'s'**: Save the current settings to the selected profile.
 - **'c' or Esc**: Close the configuration screen without loading a new profile.

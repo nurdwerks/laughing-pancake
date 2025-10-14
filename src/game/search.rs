@@ -26,6 +26,9 @@ pub struct SearchConfig {
     pub piece_mobility_weight: i32,
     pub king_safety_weight: i32,
     pub piece_development_weight: i32,
+    pub rook_placement_weight: i32,
+    pub bishop_placement_weight: i32,
+    pub knight_placement_weight: i32,
 }
 
 impl Default for SearchConfig {
@@ -41,6 +44,9 @@ impl Default for SearchConfig {
             piece_mobility_weight: 100,
             king_safety_weight: 100,
             piece_development_weight: 100,
+            rook_placement_weight: 100,
+            bishop_placement_weight: 100,
+            knight_placement_weight: 100,
         }
     }
 }
