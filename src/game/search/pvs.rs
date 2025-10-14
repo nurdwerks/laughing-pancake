@@ -26,9 +26,9 @@ pub fn search(pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config
 
     if depth == 0 {
         if config.use_quiescence_search {
-            return quiescence::search(pos, alpha, beta);
+            return quiescence::search(pos, alpha, beta, config);
         }
-        return evaluation::evaluate(pos);
+        return evaluation::evaluate(pos, config);
     }
 
     let mut is_first_move = true;

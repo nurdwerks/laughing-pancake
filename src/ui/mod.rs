@@ -51,29 +51,53 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
 
     // Draw config details
     let config = &app.current_search_config;
-    let mut config_text = vec![
-        Line::from(Span::styled("Current Configuration", Style::default().bold())),
-        Line::from(format!("Quiescence Search: {}", config.use_quiescence_search)),
-        Line::from(format!("PVS: {}", config.use_pvs)),
-        Line::from(format!("Null Move Pruning: {}", config.use_null_move_pruning)),
-        Line::from(format!("LMR: {}", config.use_lmr)),
-        Line::from(format!("Futility Pruning: {}", config.use_futility_pruning)),
-        Line::from(format!("Delta Pruning: {}", config.use_delta_pruning)),
+    let config_items = [
+        format!("Quiescence Search: {}", config.use_quiescence_search),
+        format!("PVS: {}", config.use_pvs),
+        format!("Null Move Pruning: {}", config.use_null_move_pruning),
+        format!("LMR: {}", config.use_lmr),
+        format!("Futility Pruning: {}", config.use_futility_pruning),
+        format!("Delta Pruning: {}", config.use_delta_pruning),
+        format!("Pawn Structure Weight: {}", config.pawn_structure_weight),
+        format!("Piece Mobility Weight: {}", config.piece_mobility_weight),
+        format!("King Safety Weight: {}", config.king_safety_weight),
+        format!("Piece Development Weight: {}", config.piece_development_weight),
+    ];
+
+    let mut config_text = vec![Line::from(Span::styled(
+        "Current Configuration",
+        Style::default().bold(),
+    ))];
+
+    for (i, item) in config_items.iter().enumerate() {
+        let style = if i == app.selected_config_line {
+            Style::default().bg(Color::Blue)
+        } else {
+            Style::default()
+        };
+        config_text.push(Line::from(Span::styled(item, style)));
+    }
+
+    config_text.extend(vec![
         Line::from(""),
         Line::from(Span::styled("Controls:", Style::default().bold())),
         Line::from("Up/Down: Navigate profiles"),
+        Line::from("'k'/'j': Navigate settings"),
+        Line::from("'h'/'l': Adjust setting value"),
         Line::from("Enter: Load profile"),
-        Line::from("Space: Toggle Quiescence (example)"),
         Line::from("'s': Save to selected profile"),
         Line::from("'c' or Esc: Close"),
-    ];
+    ]);
 
     if let Some(error) = &app.error_message {
-        config_text.push(Line::from(Span::styled(error, Style::default().fg(Color::Red))));
+        config_text.push(Line::from(Span::styled(
+            error,
+            Style::default().fg(Color::Red),
+        )));
     }
 
-    let config_widget = Paragraph::new(config_text)
-        .block(Block::default().borders(Borders::ALL).title("AI Settings"));
+    let config_widget =
+        Paragraph::new(config_text).block(Block::default().borders(Borders::ALL).title("AI Settings"));
     frame.render_widget(config_widget, main_layout[1]);
 }
 
