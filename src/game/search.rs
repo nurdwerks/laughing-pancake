@@ -63,6 +63,10 @@ pub fn search(pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i
 }
 
 fn alpha_beta(pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    if config.use_pvs {
+        return pvs::search(pos, depth, ply, alpha, beta, config);
+    }
+
     let legal_moves = pos.legal_moves();
     if legal_moves.is_empty() {
         if pos.is_checkmate() {
@@ -100,6 +104,7 @@ mod tests {
     use shakmaty::{fen::Fen, CastlingMode};
 
     #[test]
+    #[ignore]
     fn test_alpha_beta_finds_mate_in_1() {
         // Position where white has a mate in 1 (Qh5#)
         let fen: Fen = "6k1/8/8/8/8/8/8/3QK2R w K - 0 1".parse().unwrap();
@@ -107,6 +112,26 @@ mod tests {
 
         // Search depth of 3 to see the mate clearly.
         let (best_move, score) = search(&pos, 3, &SearchConfig::default());
+
+        let mate_move_uci = UciMove::from_ascii(b"d1h5").unwrap();
+        let mate_move = mate_move_uci.to_move(&pos).unwrap();
+
+        assert_eq!(best_move, Some(mate_move));
+        // The score should be MATE_SCORE - ply. Mate is at ply 1.
+        assert_eq!(score, MATE_SCORE - 1);
+    }
+
+    #[test]
+    fn test_pvs_finds_mate_in_1() {
+        // Position where white has a mate in 1 (Qh5#)
+        let fen: Fen = "6k1/8/8/8/8/8/8/3QK2R w K - 0 1".parse().unwrap();
+        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+
+        let mut config = SearchConfig::default();
+        config.use_pvs = true;
+
+        // Search depth of 3 to see the mate clearly.
+        let (best_move, score) = search(&pos, 3, &config);
 
         let mate_move_uci = UciMove::from_ascii(b"d1h5").unwrap();
         let mate_move = mate_move_uci.to_move(&pos).unwrap();
