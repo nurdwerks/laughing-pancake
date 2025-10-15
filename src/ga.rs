@@ -21,6 +21,15 @@ pub enum EvolutionUpdate {
     MatchCompleted(Match),
     BoardUpdate(Chess, i32), // Position, evaluation
     StatusUpdate(String),
+    PopulationSummary(Vec<(usize, u32, u32, u32)>), // Top 5: id, wins, losses, draws
+    HistoryData(Vec<(f64, f64)>), // (generation, win_rate)
+}
+
+#[derive(Serialize, Deserialize)]
+struct HistoryEntry {
+    generation: u32,
+    wins: u32,
+    total_games: u32,
 }
 
 /// Manages the evolution process in a background thread.
@@ -63,6 +72,7 @@ impl EvolutionManager {
         loop {
             self.send_status(format!("--- Starting Generation {} ---", generation_index))?;
             self.update_sender.send(EvolutionUpdate::GenerationStarted(generation_index)).map_err(|_| ())?;
+            self.send_history_data()?;
             let generation_dir = setup_directories(generation_index);
 
             self.send_status(format!("Loading population for generation {}...", generation_index))?;
@@ -125,6 +135,32 @@ impl EvolutionManager {
         sorted_individuals.sort_by_key(|i| i.wins);
         sorted_individuals.reverse(); // Highest wins first
         let elites = &sorted_individuals[0..5];
+
+        // Append the top elite's performance to the history file
+        if let Some(top_elite) = elites.first() {
+            let history_path = Path::new(EVOLUTION_DIR).join("history.json");
+            let mut history: Vec<HistoryEntry> = if history_path.exists() {
+                let json_content = fs::read_to_string(&history_path).unwrap_or_else(|_| "[]".to_string());
+                serde_json::from_str(&json_content).unwrap_or_else(|_| vec![])
+            } else {
+                vec![]
+            };
+
+            // Find the current generation number from the directory path
+            let generation_str = next_generation_dir.file_name().unwrap().to_str().unwrap();
+            let current_generation_index = generation_str.strip_prefix("generation_").unwrap().parse::<u32>().unwrap() - 1;
+
+
+            history.push(HistoryEntry {
+                generation: current_generation_index,
+                wins: top_elite.wins,
+                total_games: top_elite.wins + top_elite.losses + top_elite.draws,
+            });
+
+            let json = serde_json::to_string_pretty(&history).expect("Failed to serialize history");
+            fs::write(history_path, json).expect("Failed to write history file");
+        }
+
 
         self.send_status("Top 5 Elites (by wins):".to_string())?;
         for (i, elite) in elites.iter().enumerate() {
@@ -224,12 +260,23 @@ impl EvolutionManager {
             self.send_status(format!("Finished game {}/{}. Progress saved.", i + 1, total_matches))?;
         }
 
-        // Print final tournament results
-        self.send_status("\nTournament Results:".to_string())?;
-        for individual in &population.individuals {
-            self.send_status(format!(
+        // Send and print final tournament results
+        let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
+        sorted_individuals.sort_by_key(|i| i.wins);
+        sorted_individuals.reverse(); // Highest wins first
+
+        let summary_data: Vec<(usize, u32, u32, u32)> = sorted_individuals
+            .iter()
+            .take(5)
+            .map(|i| (i.id, i.wins, i.losses, i.draws))
+            .collect();
+        self.update_sender.send(EvolutionUpdate::PopulationSummary(summary_data)).map_err(|_| ())?;
+
+        self.send_status("\nTournament Results (Top 5):".to_string())?;
+        for (id, wins, losses, draws) in sorted_individuals.iter().take(5).map(|i| (i.id, i.wins, i.losses, i.draws)) {
+             self.send_status(format!(
                 "Individual {}: Wins={}, Losses={}, Draws={}",
-                individual.id, individual.wins, individual.losses, individual.draws
+                id, wins, losses, draws
             ))?;
         }
         Ok(())
@@ -276,6 +323,36 @@ impl EvolutionManager {
         }
 
         Ok((result, pgn))
+    }
+
+    fn send_history_data(&self) -> Result<(), ()> {
+        let history_path = Path::new(EVOLUTION_DIR).join("history.json");
+        let history: Vec<HistoryEntry> = if history_path.exists() {
+            let json_content = fs::read_to_string(&history_path).unwrap_or_else(|_| "[]".to_string());
+            serde_json::from_str(&json_content).unwrap_or_else(|e| {
+                // Log the error but don't crash. Return an empty vec.
+                // In a real app, you might want a more robust logging mechanism.
+                println!("Error parsing history.json: {}. Starting with empty history.", e);
+                vec![]
+            })
+        } else {
+            vec![]
+        };
+
+        let chart_data: Vec<(f64, f64)> = history
+            .iter()
+            .map(|entry| {
+                let win_rate = if entry.total_games > 0 {
+                    (entry.wins as f64 / entry.total_games as f64) * 100.0
+                } else {
+                    0.0
+                };
+                (entry.generation as f64, win_rate)
+            })
+            .collect();
+
+        self.update_sender.send(EvolutionUpdate::HistoryData(chart_data)).map_err(|_| ())?;
+        Ok(())
     }
 }
 

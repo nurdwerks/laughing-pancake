@@ -60,6 +60,8 @@ pub struct App {
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_white_player: String,
     pub evolution_black_player: String,
+    pub evolution_population_summary: Vec<String>,
+    pub evolution_history_chart_data: Vec<(f64, f64)>,
 }
 
 impl App {
@@ -107,6 +109,8 @@ impl App {
             evolution_thread_handle: None,
             evolution_white_player: "".to_string(),
             evolution_black_player: "".to_string(),
+            evolution_population_summary: Vec::new(),
+            evolution_history_chart_data: Vec::new(),
         }
     }
 
@@ -388,6 +392,17 @@ impl App {
                     if self.evolution_log.len() > 20 { // Keep the log from growing indefinitely
                         self.evolution_log.remove(0);
                     }
+                }
+                ga::EvolutionUpdate::PopulationSummary(summary) => {
+                    self.evolution_population_summary = summary
+                        .iter()
+                        .map(|(id, wins, losses, draws)| {
+                            format!("ID {}: {}W / {}L / {}D", id, wins, losses, draws)
+                        })
+                        .collect();
+                }
+                ga::EvolutionUpdate::HistoryData(data) => {
+                    self.evolution_history_chart_data = data;
                 }
             }
         }

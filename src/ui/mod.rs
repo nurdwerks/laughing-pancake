@@ -3,7 +3,7 @@
 use ratatui::{
     prelude::*,
     style::{Color, Style, Modifier},
-    widgets::{Block, Borders, Paragraph, List, ListItem},
+    widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, List, ListItem, Paragraph},
 };
 use shakmaty::{File, Piece, Position, Rank, Role, Square};
 use std::str::FromStr;
@@ -33,13 +33,19 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Progress bar and generation info
-            Constraint::Min(0),    // Main content
-            Constraint::Percentage(25), // Log
+            Constraint::Percentage(25), // Top pane for progress and summary
+            Constraint::Percentage(50), // Middle pane for board and match info
+            Constraint::Percentage(25), // Bottom pane for history and log
         ])
         .split(frame.size());
 
-    // --- Progress Bar and Generation Info ---
+    // --- Top Pane ---
+    let top_pane_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(main_layout[0]);
+
+    // Progress Bar
     let progress_block = Block::default().borders(Borders::ALL).title(format!(
         "Generation: {} | Matches: {}/{}",
         app.evolution_current_generation,
@@ -51,57 +57,109 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .block(progress_block)
         .gauge_style(Style::default().fg(Color::Green))
         .percent((progress * 100.0) as u16);
-    frame.render_widget(progress_bar, main_layout[0]);
+    frame.render_widget(progress_bar, top_pane_layout[0]);
 
-    // --- Main Content Area ---
-    let content_layout = Layout::default()
+    // Population Summary
+    let summary_items: Vec<ListItem> = app.evolution_population_summary
+        .iter()
+        .map(|line| ListItem::new(line.clone()))
+        .collect();
+    let summary_list = List::new(summary_items)
+        .block(Block::default().borders(Borders::ALL).title("Top 5 Individuals"));
+    frame.render_widget(summary_list, top_pane_layout[1]);
+
+
+    // --- Middle Pane ---
+    let middle_pane_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(40), // Board
-            Constraint::Percentage(30), // Match Info
-            Constraint::Percentage(30), // SAN Movelist
+            Constraint::Percentage(50), // Board
+            Constraint::Percentage(25), // Match Info
+            Constraint::Percentage(25), // SAN Movelist
         ])
         .split(main_layout[1]);
 
     // Draw Board
-    let board_block = Block::default().borders(Borders::ALL).title("Current Match");
     if let Some(board) = &app.evolution_current_match_board {
-        // Re-use the existing board drawing logic, but with the evolution board state
         let mut temp_app = App::new(None, None);
         temp_app.game_state.chess = board.clone();
-        draw_board(frame, content_layout[0], &temp_app);
+        draw_board(frame, middle_pane_layout[0], &temp_app);
     } else {
-        frame.render_widget(board_block, content_layout[0]);
+        let board_block = Block::default().borders(Borders::ALL).title("Current Match");
+        frame.render_widget(board_block, middle_pane_layout[0]);
     }
 
     // Draw Match Info
     let info_text = vec![
-        Line::from(vec![
-            Span::styled("Evaluation: ", Style::default().bold()),
-            Span::raw(format!("{}", app.evolution_current_match_eval)),
-        ]),
-        Line::from(vec![
-            Span::styled("White: ", Style::default().bold()),
-            Span::raw(&app.evolution_white_player),
-        ]),
-        Line::from(vec![
-            Span::styled("Black: ", Style::default().bold()),
-            Span::raw(&app.evolution_black_player),
-        ]),
+        Line::from(Span::styled("Evaluation: ", Style::default().bold()).fg(Color::Cyan)),
+        Line::from(Span::raw(format!("{}", app.evolution_current_match_eval))),
+        Line::from(""),
+        Line::from(Span::styled("White: ", Style::default().bold()).fg(Color::White)),
+        Line::from(Span::raw(&app.evolution_white_player)),
+        Line::from(""),
+        Line::from(Span::styled("Black: ", Style::default().bold()).fg(Color::LightRed)),
+        Line::from(Span::raw(&app.evolution_black_player)),
     ];
     let info_widget = Paragraph::new(info_text)
         .block(Block::default().borders(Borders::ALL).title("Match Info"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(info_widget, content_layout[1]);
+    frame.render_widget(info_widget, middle_pane_layout[1]);
 
     // Draw SAN Movelist
     let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())
         .block(Block::default().borders(Borders::ALL).title("SAN"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(san_widget, content_layout[2]);
+    frame.render_widget(san_widget, middle_pane_layout[2]);
 
 
-    // --- Log View ---
+    // --- Bottom Pane ---
+    let bottom_pane_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+        .split(main_layout[2]);
+
+    // History Chart
+    let datasets = vec![Dataset::default()
+        .name("Win Rate")
+        .marker(Marker::Braille)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Yellow))
+        .data(&app.evolution_history_chart_data)];
+
+    let mut x_bounds = [
+        app.evolution_history_chart_data.first().map_or(0.0, |(x, _)| *x),
+        app.evolution_history_chart_data.last().map_or(10.0, |(x, _)| *x),
+    ];
+    if (x_bounds[1] - x_bounds[0]).abs() < 1.0 {
+        x_bounds[1] = x_bounds[0] + 10.0;
+    }
+
+
+    let chart = Chart::new(datasets)
+        .block(Block::default().title("Top Elite Win Rate (%) Over Generations").borders(Borders::ALL))
+        .x_axis(
+            Axis::default()
+                .title("Generation")
+                .style(Style::default().fg(Color::Gray))
+                .bounds(x_bounds)
+                .labels(
+                    x_bounds
+                        .iter()
+                        .map(|&x| Span::from(format!("{}", x.floor())))
+                        .collect(),
+                ),
+        )
+        .y_axis(
+            Axis::default()
+                .title("Win Rate %")
+                .style(Style::default().fg(Color::Gray))
+                .bounds([0.0, 100.0])
+                .labels(vec!["0".into(), "50".into(), "100".into()]),
+        );
+    frame.render_widget(chart, bottom_pane_layout[0]);
+
+
+    // Log View
     let log_items: Vec<ListItem> = app
         .evolution_log
         .iter()
@@ -110,7 +168,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let log_list = List::new(log_items)
         .block(Block::default().borders(Borders::ALL).title("Log"))
         .direction(ratatui::widgets::ListDirection::BottomToTop);
-    frame.render_widget(log_list, main_layout[2]);
+    frame.render_widget(log_list, bottom_pane_layout[1]);
 }
 
 fn draw_config_screen(frame: &mut Frame, app: &App) {
