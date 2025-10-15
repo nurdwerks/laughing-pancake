@@ -4,6 +4,7 @@ use rand::Rng;
 use rand::distributions::Distribution;
 use shakmaty::{Chess, Position};
 use shakmaty::san::SanPlus;
+use serde::{Deserialize, Serialize};
 
 use crate::game::search::{self, SearchConfig, SearchAlgorithm};
 
@@ -47,6 +48,65 @@ impl Population {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Match {
+    pub white_player_name: String,
+    pub black_player_name: String,
+    pub status: String, // "pending", "completed"
+    pub result: String, // "1-0", "0-1", "1/2-1/2", ""
+    pub san: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Generation {
+    pub generation_index: u32,
+    pub matches: Vec<Match>,
+}
+
+/// Saves the current state of a generation to a JSON file.
+pub fn save_generation(generation: &Generation) {
+    let file_path = Path::new(EVOLUTION_DIR)
+        .join(format!("generation_{}.json", generation.generation_index));
+    let json = serde_json::to_string_pretty(generation).expect("Failed to serialize generation state");
+    fs::write(file_path, json).expect("Failed to write generation state file");
+}
+
+/// Loads a generation from a file, or creates a new one if it doesn't exist or is corrupt.
+pub fn load_or_create_generation(generation_index: u32, population: &Population) -> Generation {
+    let file_path = Path::new(EVOLUTION_DIR)
+        .join(format!("generation_{}.json", generation_index));
+
+    if file_path.exists() {
+        let json = fs::read_to_string(&file_path);
+        if let Ok(json_content) = json {
+            let generation: Result<Generation, _> = serde_json::from_str(&json_content);
+            if let Ok(gen) = generation {
+                println!("Successfully loaded existing match data for generation {}.", generation_index);
+                return gen;
+            } else {
+                println!("Warning: Found corrupt generation file at {:?}. Starting generation from scratch.", file_path);
+            }
+        } else {
+             println!("Warning: Could not read generation file at {:?}. Starting generation from scratch.", file_path);
+        }
+    }
+
+    println!("No existing match data found for generation {}. Creating new tournament.", generation_index);
+    let games = generate_pairings(population);
+    let matches = games.into_iter().map(|game| Match {
+        white_player_name: format!("individual_{}.json", game.white_player_id),
+        black_player_name: format!("individual_{}.json", game.black_player_id),
+        status: "pending".to_string(),
+        result: "".to_string(),
+        san: "".to_string(),
+    }).collect();
+
+    Generation {
+        generation_index,
+        matches,
+    }
+}
+
 
 /// The main entry point for the evolutionary algorithm.
 /// Represents a single game to be played between two individuals.
@@ -84,11 +144,9 @@ pub fn run() {
         let mut population = Population::load(&generation_dir);
         println!("Loaded {} individuals.", population.individuals.len());
 
-        println!("Generating tournament pairings...");
-        let games = generate_pairings(&population);
-        println!("Generated {} games for the tournament.", games.len());
+        let mut generation = load_or_create_generation(generation_index, &population);
 
-        run_tournament(&mut population, &games, &generation_dir);
+        run_tournament(&mut population, &mut generation, &generation_dir);
 
         let next_generation_dir = setup_directories(generation_index + 1);
         evolve_population(&population, &next_generation_dir);
@@ -282,59 +340,60 @@ fn find_latest_complete_generation() -> Option<u32> {
         .max()
 }
 
-use crossbeam_utils::thread;
-
-/// Runs all the games in the tournament in parallel.
-fn run_tournament(population: &mut Population, games: &[Game], generation_dir: &Path) {
-    let games_dir = generation_dir.join("games");
-    if !games_dir.exists() {
-        fs::create_dir(&games_dir).expect("Failed to create games directory");
-    }
-
-    let results = thread::scope(|s| {
-        let mut handlers = Vec::new();
-        for (i, game) in games.iter().enumerate() {
-            let white_config = population.individuals[game.white_player_id].config.clone();
-            let black_config = population.individuals[game.black_player_id].config.clone();
-            let game_id = i;
-
-            println!(
-                "Queueing game {}/{} (White: {}, Black: {})...",
-                game_id + 1,
-                games.len(),
-                game.white_player_id,
-                game.black_player_id
-            );
-
-            let handler = s.spawn(move |_| {
-                let (result, pgn) = play_game(&white_config, &black_config);
-                println!("Finished game {}/{}.", game_id + 1, games.len());
-                (game.white_player_id, game.black_player_id, result, pgn)
-            });
-            handlers.push(handler);
+/// Runs all the games in the tournament, saving progress after each game.
+fn run_tournament(population: &mut Population, generation: &mut Generation, _generation_dir: &Path) {
+    let total_matches = generation.matches.len();
+    for i in 0..total_matches {
+        if generation.matches[i].status == "completed" {
+            println!("Skipping already completed game {}/{}.", i + 1, total_matches);
+            continue;
         }
 
-        handlers.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
-    }).unwrap();
+        let white_player_name = generation.matches[i].white_player_name.clone();
+        let black_player_name = generation.matches[i].black_player_name.clone();
 
-    for (white_id, black_id, result, pgn) in results {
-        let pgn_path = games_dir.join(format!("game_{}_vs_{}.pgn", white_id, black_id));
-        fs::write(pgn_path, pgn).expect("Failed to write PGN file");
+        println!("Playing game {}/{} (White: {}, Black: {})...",
+            i + 1,
+            total_matches,
+            white_player_name,
+            black_player_name
+        );
+
+        let white_id = parse_id_from_name(&white_player_name);
+        let black_id = parse_id_from_name(&black_player_name);
+
+        let white_config = &population.individuals[white_id].config;
+        let black_config = &population.individuals[black_id].config;
+
+        let (result, san) = play_game(white_config, black_config);
+
+        // Re-borrow mutably for the update
+        let current_match = &mut generation.matches[i];
+        current_match.san = san;
+        current_match.status = "completed".to_string();
 
         match result {
             GameResult::WhiteWin => {
                 population.individuals[white_id].wins += 1;
                 population.individuals[black_id].losses += 1;
+                current_match.result = "1-0".to_string();
             }
             GameResult::BlackWin => {
                 population.individuals[white_id].losses += 1;
                 population.individuals[black_id].wins += 1;
+                current_match.result = "0-1".to_string();
             }
             GameResult::Draw => {
                 population.individuals[white_id].draws += 1;
                 population.individuals[black_id].draws += 1;
+                current_match.result = "1/2-1/2".to_string();
             }
         }
+
+        // The mutable borrow of `generation.matches[i]` is dropped here.
+        // Now we can save the whole generation.
+        save_generation(generation);
+        println!("Finished game {}/{}. Progress saved.", i + 1, total_matches);
     }
 
     // Print final tournament results
@@ -345,6 +404,14 @@ fn run_tournament(population: &mut Population, games: &[Game], generation_dir: &
             individual.id, individual.wins, individual.losses, individual.draws
         );
     }
+}
+
+/// Helper to extract the individual's ID from its filename.
+fn parse_id_from_name(name: &str) -> usize {
+    name.strip_prefix("individual_")
+        .and_then(|s| s.strip_suffix(".json"))
+        .and_then(|s| s.parse::<usize>().ok())
+        .expect("Failed to parse individual ID from filename")
 }
 
 /// Simulates a single game between two AI configurations.
