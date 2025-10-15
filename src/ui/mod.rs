@@ -14,7 +14,11 @@ use ratatui::widgets::{Gauge, Wrap};
 
 fn format_move_tree(node: &MoveTreeNode, depth: usize) -> String {
     let mut s = String::new();
-    let indent = "  ".repeat(depth);
+    let indent = if depth > 0 {
+        format!("{}-", "  ".repeat(depth - 1))
+    } else {
+        String::new()
+    };
     s.push_str(&format!("{}{} (Score: {})\n", indent, node.move_san, node.score));
 
     // To prevent the output from becoming too large, limit the depth and number of children shown
@@ -160,7 +164,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let log_list = List::new(log_items)
         .block(Block::default().borders(Borders::ALL).title("Log"))
         .direction(ratatui::widgets::ListDirection::BottomToTop);
-    frame.render_widget(log_list, main_layout[2]);
+    frame.render_stateful_widget(log_list, main_layout[2], &mut app.evolution_log_state);
 }
 
 fn draw_config_screen(frame: &mut Frame, app: &App) {
