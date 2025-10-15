@@ -1,11 +1,11 @@
 // app/mod.rs
 
-use crate::config;
+use crate::{config, ga};
 use crate::game::{search::SearchConfig, GameState};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{prelude::*, Terminal};
-use shakmaty::{Color, Move, Outcome, Position, KnownOutcome};
+use shakmaty::{Chess, Color, Move, Outcome, Position, KnownOutcome};
 use shakmaty::uci::UciMove;
 use std::io;
 use std::str::FromStr;
@@ -19,6 +19,13 @@ pub enum GameMode {
     AiVsAi,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum AppMode {
+    Game,
+    Config,
+    Evolve,
+}
+
 pub struct App {
     pub game_state: GameState,
     should_quit: bool,
@@ -28,8 +35,9 @@ pub struct App {
     pub game_result: Option<String>,
     pub tablebase_path: Option<String>,
     pub opening_book_path: Option<String>,
+    // App mode
+    pub mode: AppMode,
     // AI configuration state
-    pub show_ai_config: bool,
     pub profiles: Vec<String>,
     pub selected_profile_index: usize,
     pub current_search_config: SearchConfig,
@@ -38,6 +46,20 @@ pub struct App {
     is_ai_searching: bool,
     ai_move_sender: Sender<Move>,
     ai_move_receiver: Receiver<Move>,
+    // Evolution state
+    pub is_evolving: bool,
+    evolution_sender: Sender<ga::EvolutionUpdate>,
+    pub evolution_receiver: Receiver<ga::EvolutionUpdate>,
+    pub evolution_log: Vec<String>,
+    pub evolution_current_generation: u32,
+    pub evolution_matches_completed: usize,
+    pub evolution_total_matches: usize,
+    pub evolution_current_match_board: Option<Chess>,
+    pub evolution_current_match_eval: i32,
+    pub evolution_current_match_san: String,
+    evolution_thread_handle: Option<thread::JoinHandle<()>>,
+    pub evolution_white_player: String,
+    pub evolution_black_player: String,
 }
 
 impl App {
@@ -46,7 +68,8 @@ impl App {
             GameState::new(tablebase_path.clone(), opening_book_path.clone());
         let profiles = config::get_profiles().unwrap_or_else(|_| vec!["default".to_string()]);
         let default_config = SearchConfig::default();
-        let (tx, rx) = unbounded();
+        let (ai_tx, ai_rx) = unbounded();
+        let (evo_tx, evo_rx) = unbounded();
 
         // Ensure the default profile exists
         if !profiles.contains(&"default".to_string()) {
@@ -62,21 +85,39 @@ impl App {
             game_result: None,
             tablebase_path,
             opening_book_path,
-            show_ai_config: false,
+            mode: AppMode::Game,
             profiles,
             selected_profile_index: 0,
             current_search_config: default_config,
             selected_config_line: 0,
             is_ai_searching: false,
-            ai_move_sender: tx,
-            ai_move_receiver: rx,
+            ai_move_sender: ai_tx,
+            ai_move_receiver: ai_rx,
+            // Evolution state
+            is_evolving: false,
+            evolution_sender: evo_tx,
+            evolution_receiver: evo_rx,
+            evolution_log: Vec::new(),
+            evolution_current_generation: 0,
+            evolution_matches_completed: 0,
+            evolution_total_matches: 0,
+            evolution_current_match_board: None,
+            evolution_current_match_eval: 0,
+            evolution_current_match_san: "".to_string(),
+            evolution_thread_handle: None,
+            evolution_white_player: "".to_string(),
+            evolution_black_player: "".to_string(),
         }
     }
 
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         while !self.should_quit {
-            terminal.draw(|f| ui::draw(f, &self))?;
+            terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events()?;
+
+        if self.is_evolving {
+            self.handle_evolution_updates();
+        }
 
             if self.game_state.is_game_over() {
                 if self.game_result.is_none() {
@@ -114,15 +155,18 @@ impl App {
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == event::KeyEventKind::Press {
-                    if self.show_ai_config {
-                        self.handle_config_events(key.code);
-                    } else {
-                        match key.code {
+                    match self.mode {
+                        AppMode::Config => self.handle_config_events(key.code),
+                        AppMode::Game => match key.code {
                             KeyCode::Char('q') => {
                                 self.should_quit = true;
                             }
                             KeyCode::Char('c') => {
-                                self.show_ai_config = true;
+                                self.mode = AppMode::Config;
+                            }
+                            KeyCode::Char('e') => {
+                                self.mode = AppMode::Evolve;
+                                self.start_evolution();
                             }
                             KeyCode::Char('s') => {
                                 self.game_mode = match self.game_mode {
@@ -155,7 +199,14 @@ impl App {
                                 }
                             }
                             _ => {}
-                        }
+                        },
+                        AppMode::Evolve => match key.code {
+                            KeyCode::Char('e') | KeyCode::Char('q') => {
+                                self.stop_evolution();
+                                self.mode = AppMode::Game;
+                            }
+                            _ => {}
+                        },
                     }
                 }
             }
@@ -198,7 +249,7 @@ impl App {
     fn handle_config_events(&mut self, key_code: KeyCode) {
         match key_code {
             KeyCode::Char('c') | KeyCode::Esc => {
-                self.show_ai_config = false;
+                self.mode = AppMode::Game;
             }
             KeyCode::Up => {
                 if self.selected_profile_index > 0 {
@@ -215,7 +266,7 @@ impl App {
                 if let Ok(config) = config::load_profile(profile_name) {
                     self.current_search_config = config;
                     self.game_state.search_config = self.current_search_config.clone();
-                    self.show_ai_config = false;
+                    self.mode = AppMode::Game;
                 } else {
                     self.error_message = Some(format!("Failed to load profile: {}", profile_name));
                 }
@@ -284,6 +335,61 @@ impl App {
             30 => config.space_evaluation_weight = if increase { (config.space_evaluation_weight + 10).min(200) } else { (config.space_evaluation_weight - 10).max(0) },
             31 => config.initiative_evaluation_weight = if increase { (config.initiative_evaluation_weight + 10).min(200) } else { (config.initiative_evaluation_weight - 10).max(0) },
             _ => {}
+        }
+    }
+
+    fn start_evolution(&mut self) {
+        if self.is_evolving {
+            return;
+        }
+        self.is_evolving = true;
+        let evolution_manager = ga::EvolutionManager::new(self.evolution_sender.clone());
+        let handle = thread::spawn(move || {
+            evolution_manager.run();
+        });
+        self.evolution_thread_handle = Some(handle);
+    }
+
+    fn stop_evolution(&mut self) {
+        if !self.is_evolving {
+            return;
+        }
+        self.is_evolving = false;
+        // The thread will terminate on its own when the sender is dropped.
+        // We don't need to explicitly join the handle here,
+        // as it might block the UI thread if the evolution thread is busy.
+        // The handle is mainly for ensuring the thread is cleaned up when the app exits.
+        self.evolution_thread_handle = None;
+    }
+
+    fn handle_evolution_updates(&mut self) {
+        while let Ok(update) = self.evolution_receiver.try_recv() {
+            match update {
+                ga::EvolutionUpdate::GenerationStarted(gen_index) => {
+                    self.evolution_current_generation = gen_index;
+                    self.evolution_matches_completed = 0;
+                    self.evolution_total_matches = 9900; // POPULATION_SIZE * (POPULATION_SIZE - 1)
+                    self.evolution_log.push(format!("Generation {} started.", gen_index));
+                }
+                ga::EvolutionUpdate::MatchStarted(white_player, black_player) => {
+                    self.evolution_white_player = white_player;
+                    self.evolution_black_player = black_player;
+                }
+                ga::EvolutionUpdate::MatchCompleted(game_match) => {
+                    self.evolution_matches_completed += 1;
+                    self.evolution_current_match_san = game_match.san;
+                }
+                ga::EvolutionUpdate::BoardUpdate(board, eval) => {
+                    self.evolution_current_match_board = Some(board);
+                    self.evolution_current_match_eval = eval;
+                }
+                ga::EvolutionUpdate::StatusUpdate(message) => {
+                    self.evolution_log.push(message);
+                    if self.evolution_log.len() > 20 { // Keep the log from growing indefinitely
+                        self.evolution_log.remove(0);
+                    }
+                }
+            }
         }
     }
 }

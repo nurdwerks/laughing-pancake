@@ -33,32 +33,28 @@ struct Args {
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    if args.evolve {
-        ga::run();
-    } else {
-        // setup terminal
-        enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-        let backend = CrosstermBackend::new(stdout);
-        let mut terminal = Terminal::new(backend)?;
+    // setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-        // create app and run it
-        let mut app = App::new(args.tablebase_path, args.opening_book);
-        let res = app.run(&mut terminal);
+    // create app and run it
+    let mut app = App::new(args.tablebase_path, args.opening_book);
+    let res = app.run(&mut terminal);
 
-        // restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
+    // restore terminal
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
 
-        if let Err(err) = res {
-            println!("{err:?}");
-        }
+    if let Err(err) = res {
+        println!("{err:?}");
     }
 
     Ok(())
