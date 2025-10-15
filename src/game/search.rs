@@ -282,7 +282,9 @@ impl PvsSearcher {
     }
 
     fn get_piece_index(&self, piece: Piece) -> usize {
-        (piece.color as usize * 6) + piece.role as usize
+        // Shakmaty's Role enum appears to be 1-indexed when cast to usize,
+        // with Pawn = 1, King = 6. We subtract 1 to get a 0-based index.
+        (piece.color as usize * 6) + (piece.role as usize - 1)
     }
 
     fn order_moves(&self, moves: &mut [Move], pos: &Chess, ply: u8, config: &SearchConfig) {

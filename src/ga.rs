@@ -1,0 +1,475 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use rand::Rng;
+use rand::distributions::Distribution;
+use shakmaty::{Chess, Position};
+use shakmaty::san::SanPlus;
+
+use crate::game::search::{self, SearchConfig, SearchAlgorithm};
+
+const EVOLUTION_DIR: &str = "evolution";
+const POPULATION_SIZE: usize = 100;
+const FIXED_SEARCH_DEPTH: u8 = 5;
+const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
+
+/// Represents a single AI candidate in the population.
+pub struct Individual {
+    pub id: usize,
+    pub config: SearchConfig,
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+}
+
+/// Represents a collection of individuals for a single generation.
+pub struct Population {
+    pub individuals: Vec<Individual>,
+}
+
+impl Population {
+    /// Loads a population from a generation directory.
+    pub fn load(generation_dir: &Path) -> Self {
+        let mut individuals = Vec::new();
+        for i in 0..POPULATION_SIZE {
+            let file_path = generation_dir.join(format!("individual_{}.json", i));
+            let json = fs::read_to_string(file_path).expect("Failed to read config file");
+            let config: SearchConfig = serde_json::from_str(&json).expect("Failed to deserialize config");
+
+            individuals.push(Individual {
+                id: i,
+                config,
+                wins: 0,
+                losses: 0,
+                draws: 0,
+            });
+        }
+        Self { individuals }
+    }
+}
+
+
+/// The main entry point for the evolutionary algorithm.
+/// Represents a single game to be played between two individuals.
+struct Game {
+    white_player_id: usize,
+    black_player_id: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GameResult {
+    WhiteWin,
+    BlackWin,
+    Draw,
+}
+
+pub fn run() {
+    let mut generation_index = find_latest_complete_generation().unwrap_or(0);
+    if generation_index > 0 {
+         println!("Resuming from last completed generation: {}.", generation_index);
+    }
+
+    // Special handling for first ever run.
+    if generation_index == 0 && !Path::new(EVOLUTION_DIR).join("generation_0/individual_99.json").exists() {
+        println!("No existing population found. Generating initial population for Generation 0.");
+        let generation_dir = setup_directories(0);
+        generate_initial_population(&generation_dir);
+    }
+
+
+    loop {
+        println!("\n--- Starting Generation {} ---", generation_index);
+        let generation_dir = setup_directories(generation_index);
+
+        println!("Loading population for generation {}...", generation_index);
+        let mut population = Population::load(&generation_dir);
+        println!("Loaded {} individuals.", population.individuals.len());
+
+        println!("Generating tournament pairings...");
+        let games = generate_pairings(&population);
+        println!("Generated {} games for the tournament.", games.len());
+
+        run_tournament(&mut population, &games, &generation_dir);
+
+        let next_generation_dir = setup_directories(generation_index + 1);
+        evolve_population(&population, &next_generation_dir);
+        println!("--- Generation {} Complete ---", generation_index);
+        generation_index += 1;
+    }
+}
+
+
+/// Takes a completed tournament population and evolves it to create the next generation.
+fn evolve_population(population: &Population, next_generation_dir: &Path) {
+    println!("\nEvolving to the next generation...");
+
+    // 1. Selection: Find the top 5 individuals
+    let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
+    sorted_individuals.sort_by_key(|i| i.wins);
+    sorted_individuals.reverse(); // Highest wins first
+    let elites = &sorted_individuals[0..5];
+
+    println!("Top 5 Elites (by wins):");
+    for (i, elite) in elites.iter().enumerate() {
+        println!(
+            "{}. Individual {} (Wins: {})",
+            i + 1,
+            elite.id,
+            elite.wins
+        );
+    }
+
+    let mut rng = rand::thread_rng();
+
+    // 2. Elitism: Copy the top 5 to the next generation
+    for i in 0..5 {
+        let elite_config_path = next_generation_dir.join(format!("individual_{}.json", i));
+        let json = serde_json::to_string_pretty(&elites[i].config).expect("Failed to serialize elite config");
+        fs::write(elite_config_path, json).expect("Failed to write elite config file");
+    }
+
+    // 3. Breeding & 4. Mutation: Create the remaining 95 individuals
+    for i in 5..POPULATION_SIZE {
+        // Select two random parents from the elite pool
+        let parent1 = elites[rng.gen_range(0..elites.len())];
+        let parent2 = elites[rng.gen_range(0..elites.len())];
+
+        // Create the child by crossing over parameters
+        let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
+
+        // Mutate the child
+        mutate(&mut child_config, &mut rng);
+
+        let child_config_path = next_generation_dir.join(format!("individual_{}.json", i));
+        let json = serde_json::to_string_pretty(&child_config).expect("Failed to serialize child config");
+        fs::write(child_config_path, json).expect("Failed to write child config file");
+    }
+    println!("Generated and saved {} new individuals for the next generation.", POPULATION_SIZE);
+}
+
+
+/// Creates a new SearchConfig by randomly selecting parameters from two parents.
+fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
+    SearchConfig {
+        search_algorithm: if rng.gen_bool(0.5) { p1.search_algorithm.clone() } else { p2.search_algorithm.clone() },
+        use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
+        use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
+        use_killer_moves: if rng.gen_bool(0.5) { p1.use_killer_moves } else { p2.use_killer_moves },
+        mcts_simulations: if rng.gen_bool(0.5) { p1.mcts_simulations } else { p2.mcts_simulations },
+        use_quiescence_search: if rng.gen_bool(0.5) { p1.use_quiescence_search } else { p2.use_quiescence_search },
+        use_pvs: if rng.gen_bool(0.5) { p1.use_pvs } else { p2.use_pvs },
+        use_null_move_pruning: if rng.gen_bool(0.5) { p1.use_null_move_pruning } else { p2.use_null_move_pruning },
+        use_lmr: if rng.gen_bool(0.5) { p1.use_lmr } else { p2.use_lmr },
+        use_futility_pruning: if rng.gen_bool(0.5) { p1.use_futility_pruning } else { p2.use_futility_pruning },
+        use_delta_pruning: if rng.gen_bool(0.5) { p1.use_delta_pruning } else { p2.use_delta_pruning },
+        pawn_structure_weight: if rng.gen_bool(0.5) { p1.pawn_structure_weight } else { p2.pawn_structure_weight },
+        piece_mobility_weight: if rng.gen_bool(0.5) { p1.piece_mobility_weight } else { p2.piece_mobility_weight },
+        king_safety_weight: if rng.gen_bool(0.5) { p1.king_safety_weight } else { p2.king_safety_weight },
+        piece_development_weight: if rng.gen_bool(0.5) { p1.piece_development_weight } else { p2.piece_development_weight },
+        rook_placement_weight: if rng.gen_bool(0.5) { p1.rook_placement_weight } else { p2.rook_placement_weight },
+        bishop_placement_weight: if rng.gen_bool(0.5) { p1.bishop_placement_weight } else { p2.bishop_placement_weight },
+        knight_placement_weight: if rng.gen_bool(0.5) { p1.knight_placement_weight } else { p2.knight_placement_weight },
+        passed_pawn_weight: if rng.gen_bool(0.5) { p1.passed_pawn_weight } else { p2.passed_pawn_weight },
+        isolated_pawn_weight: if rng.gen_bool(0.5) { p1.isolated_pawn_weight } else { p2.isolated_pawn_weight },
+        doubled_pawn_weight: if rng.gen_bool(0.5) { p1.doubled_pawn_weight } else { p2.doubled_pawn_weight },
+        bishop_pair_weight: if rng.gen_bool(0.5) { p1.bishop_pair_weight } else { p2.bishop_pair_weight },
+        pawn_chain_weight: if rng.gen_bool(0.5) { p1.pawn_chain_weight } else { p2.pawn_chain_weight },
+        ram_weight: if rng.gen_bool(0.5) { p1.ram_weight } else { p2.ram_weight },
+        candidate_passed_pawn_weight: if rng.gen_bool(0.5) { p1.candidate_passed_pawn_weight } else { p2.candidate_passed_pawn_weight },
+        king_pawn_shield_weight: if rng.gen_bool(0.5) { p1.king_pawn_shield_weight } else { p2.king_pawn_shield_weight },
+        king_open_file_penalty: if rng.gen_bool(0.5) { p1.king_open_file_penalty } else { p2.king_open_file_penalty },
+        king_attackers_weight: if rng.gen_bool(0.5) { p1.king_attackers_weight } else { p2.king_attackers_weight },
+        threat_analysis_weight: if rng.gen_bool(0.5) { p1.threat_analysis_weight } else { p2.threat_analysis_weight },
+        tempo_bonus_weight: if rng.gen_bool(0.5) { p1.tempo_bonus_weight } else { p2.tempo_bonus_weight },
+        space_evaluation_weight: if rng.gen_bool(0.5) { p1.space_evaluation_weight } else { p2.space_evaluation_weight },
+        initiative_evaluation_weight: if rng.gen_bool(0.5) { p1.initiative_evaluation_weight } else { p2.initiative_evaluation_weight },
+    }
+}
+
+/// Applies mutation to a SearchConfig.
+fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
+    // Mutate booleans with a 3% chance
+    if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }
+    if rng.gen_bool(0.03) { config.use_history_heuristic = !config.use_history_heuristic; }
+    if rng.gen_bool(0.03) { config.use_killer_moves = !config.use_killer_moves; }
+    if rng.gen_bool(0.03) { config.use_quiescence_search = !config.use_quiescence_search; }
+    if rng.gen_bool(0.03) { config.use_pvs = !config.use_pvs; }
+    if rng.gen_bool(0.03) { config.use_null_move_pruning = !config.use_null_move_pruning; }
+    if rng.gen_bool(0.03) { config.use_lmr = !config.use_lmr; }
+    if rng.gen_bool(0.03) { config.use_futility_pruning = !config.use_futility_pruning; }
+    if rng.gen_bool(0.03) { config.use_delta_pruning = !config.use_delta_pruning; }
+
+    // Mutate numeric values individually
+    config.mcts_simulations = mutate_numeric(config.mcts_simulations as i32, rng) as u32;
+    config.pawn_structure_weight = mutate_numeric(config.pawn_structure_weight, rng);
+    config.piece_mobility_weight = mutate_numeric(config.piece_mobility_weight, rng);
+    config.king_safety_weight = mutate_numeric(config.king_safety_weight, rng);
+    config.piece_development_weight = mutate_numeric(config.piece_development_weight, rng);
+    config.rook_placement_weight = mutate_numeric(config.rook_placement_weight, rng);
+    config.bishop_placement_weight = mutate_numeric(config.bishop_placement_weight, rng);
+    config.knight_placement_weight = mutate_numeric(config.knight_placement_weight, rng);
+    config.passed_pawn_weight = mutate_numeric(config.passed_pawn_weight, rng);
+    config.isolated_pawn_weight = mutate_numeric(config.isolated_pawn_weight, rng);
+    config.doubled_pawn_weight = mutate_numeric(config.doubled_pawn_weight, rng);
+    config.bishop_pair_weight = mutate_numeric(config.bishop_pair_weight, rng);
+    config.pawn_chain_weight = mutate_numeric(config.pawn_chain_weight, rng);
+    config.ram_weight = mutate_numeric(config.ram_weight, rng);
+    config.candidate_passed_pawn_weight = mutate_numeric(config.candidate_passed_pawn_weight, rng);
+    config.king_pawn_shield_weight = mutate_numeric(config.king_pawn_shield_weight, rng);
+    config.king_open_file_penalty = mutate_numeric(config.king_open_file_penalty, rng);
+    config.king_attackers_weight = mutate_numeric(config.king_attackers_weight, rng);
+    config.threat_analysis_weight = mutate_numeric(config.threat_analysis_weight, rng);
+    config.tempo_bonus_weight = mutate_numeric(config.tempo_bonus_weight, rng);
+    config.space_evaluation_weight = mutate_numeric(config.space_evaluation_weight, rng);
+    config.initiative_evaluation_weight = mutate_numeric(config.initiative_evaluation_weight, rng);
+}
+
+/// Decides if a mutation should occur and, if so, by how much.
+fn mutate_numeric(value: i32, rng: &mut impl Rng) -> i32 {
+    if !rng.gen_bool(MUTATION_CHANCE) {
+        return value; // No mutation
+    }
+
+    // "A 1% change should occur only 25% of the time and it should scale so that at 5% change only occurs at 1% of the time."
+    // This implies a distribution of probabilities for the magnitude.
+    // Let's use a simple linear interpolation for the probabilities in between.
+    // 1% -> 25, 2% -> 19, 3% -> 13, 4% -> 7, 5% -> 1. Total weight = 65.
+    let choices = [
+        (0.01, 25), // 1% magnitude, ~38.5% chance
+        (0.02, 19), // 2% magnitude, ~29.2% chance
+        (0.03, 13), // 3% magnitude, ~20.0% chance
+        (0.04, 7),  // 4% magnitude, ~10.8% chance
+        (0.05, 1),  // 5% magnitude, ~1.5% chance
+    ];
+    // The user's request is a bit ambiguous, a linear scale is a reasonable interpretation.
+    // A 1% change (weight 25) should be 25 times more likely than a 5% change (weight 1).
+    let dist = rand::distributions::WeightedIndex::new(choices.iter().map(|item| item.1)).unwrap();
+    let change_factor = choices[dist.sample(rng)].0;
+
+    let change = (value as f64 * change_factor).round() as i32;
+    let new_value = if rng.gen_bool(0.5) {
+        value.saturating_add(change)
+    } else {
+        value.saturating_sub(change)
+    };
+    new_value.max(0) // Ensure weights don't go negative
+}
+
+/// Finds the index of the latest fully completed generation directory.
+fn find_latest_complete_generation() -> Option<u32> {
+    if !Path::new(EVOLUTION_DIR).exists() {
+        return None;
+    }
+
+    fs::read_dir(EVOLUTION_DIR)
+        .ok()?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            if entry.file_type().ok()?.is_dir() {
+                let dir_name = entry.file_name();
+                let dir_str = dir_name.to_str()?;
+                if dir_str.starts_with("generation_") {
+                    let generation_index = dir_str.strip_prefix("generation_")?.parse::<u32>().ok()?;
+
+                    // Check if the generation is complete by looking for the last individual file.
+                    let last_individual_path = entry.path().join(format!("individual_{}.json", POPULATION_SIZE - 1));
+                    if last_individual_path.exists() {
+                        return Some(generation_index);
+                    }
+                }
+            }
+            None
+        })
+        .max()
+}
+
+use crossbeam_utils::thread;
+
+/// Runs all the games in the tournament in parallel.
+fn run_tournament(population: &mut Population, games: &[Game], generation_dir: &Path) {
+    let games_dir = generation_dir.join("games");
+    if !games_dir.exists() {
+        fs::create_dir(&games_dir).expect("Failed to create games directory");
+    }
+
+    let results = thread::scope(|s| {
+        let mut handlers = Vec::new();
+        for (i, game) in games.iter().enumerate() {
+            let white_config = population.individuals[game.white_player_id].config.clone();
+            let black_config = population.individuals[game.black_player_id].config.clone();
+            let game_id = i;
+
+            println!(
+                "Queueing game {}/{} (White: {}, Black: {})...",
+                game_id + 1,
+                games.len(),
+                game.white_player_id,
+                game.black_player_id
+            );
+
+            let handler = s.spawn(move |_| {
+                let (result, pgn) = play_game(&white_config, &black_config);
+                println!("Finished game {}/{}.", game_id + 1, games.len());
+                (game.white_player_id, game.black_player_id, result, pgn)
+            });
+            handlers.push(handler);
+        }
+
+        handlers.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+    }).unwrap();
+
+    for (white_id, black_id, result, pgn) in results {
+        let pgn_path = games_dir.join(format!("game_{}_vs_{}.pgn", white_id, black_id));
+        fs::write(pgn_path, pgn).expect("Failed to write PGN file");
+
+        match result {
+            GameResult::WhiteWin => {
+                population.individuals[white_id].wins += 1;
+                population.individuals[black_id].losses += 1;
+            }
+            GameResult::BlackWin => {
+                population.individuals[white_id].losses += 1;
+                population.individuals[black_id].wins += 1;
+            }
+            GameResult::Draw => {
+                population.individuals[white_id].draws += 1;
+                population.individuals[black_id].draws += 1;
+            }
+        }
+    }
+
+    // Print final tournament results
+    println!("\nTournament Results:");
+    for individual in &population.individuals {
+        println!(
+            "Individual {}: Wins={}, Losses={}, Draws={}",
+            individual.id, individual.wins, individual.losses, individual.draws
+        );
+    }
+}
+
+/// Simulates a single game between two AI configurations.
+fn play_game(white_config: &SearchConfig, black_config: &SearchConfig) -> (GameResult, String) {
+    let mut pos = Chess::default();
+    let mut sans = Vec::new();
+
+    while !pos.is_game_over() {
+        let config = if pos.turn().is_white() {
+            white_config
+        } else {
+            black_config
+        };
+
+        let (best_move, _) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
+
+        if let Some(m) = best_move {
+            sans.push(SanPlus::from_move_and_play_unchecked(&mut pos, m));
+        } else {
+            // No legal moves, but not game over? Should be stalemate.
+            break;
+        }
+    }
+
+    let outcome = pos.outcome();
+    let result = match outcome.winner() {
+        Some(shakmaty::Color::White) => GameResult::WhiteWin,
+        Some(shakmaty::Color::Black) => GameResult::BlackWin,
+        None => GameResult::Draw,
+    };
+
+    let mut pgn = String::new();
+    for (i, san) in sans.iter().enumerate() {
+        if i % 2 == 0 {
+            pgn.push_str(&format!("{}. ", i / 2 + 1));
+        }
+        pgn.push_str(&format!("{} ", san));
+    }
+
+    (result, pgn)
+}
+
+/// Generates all pairings for a round-robin tournament where each player plays every other player twice.
+fn generate_pairings(population: &Population) -> Vec<Game> {
+    let mut games = Vec::new();
+    for i in 0..population.individuals.len() {
+        for j in 0..population.individuals.len() {
+            if i == j {
+                continue;
+            }
+            games.push(Game {
+                white_player_id: population.individuals[i].id,
+                black_player_id: population.individuals[j].id,
+            });
+        }
+    }
+    games
+}
+
+/// Creates the necessary directories for storing evolution data for a specific generation.
+fn setup_directories(generation_index: u32) -> PathBuf {
+    if !Path::new(EVOLUTION_DIR).exists() {
+        fs::create_dir(EVOLUTION_DIR).expect("Failed to create evolution directory");
+    }
+
+    let generation_dir = PathBuf::from(EVOLUTION_DIR).join(format!("generation_{}", generation_index));
+    if !generation_dir.exists() {
+        fs::create_dir(&generation_dir).expect("Failed to create generation directory");
+    }
+    generation_dir
+}
+
+/// Generates the initial population with random variations from the default config.
+fn generate_initial_population(generation_dir: &Path) {
+    let mut rng = rand::thread_rng();
+
+    for i in 0..POPULATION_SIZE {
+        let mut config = SearchConfig::default();
+        let default_config = SearchConfig::default(); // for reference values
+
+        // Randomize booleans
+        config.use_aspiration_windows = rng.gen_bool(0.5);
+        config.use_history_heuristic = rng.gen_bool(0.5);
+        config.use_killer_moves = rng.gen_bool(0.5);
+        config.use_quiescence_search = rng.gen_bool(0.5);
+        config.use_pvs = rng.gen_bool(0.5);
+        config.use_null_move_pruning = rng.gen_bool(0.5);
+        config.use_lmr = rng.gen_bool(0.5);
+        config.use_futility_pruning = rng.gen_bool(0.5);
+        config.use_delta_pruning = rng.gen_bool(0.5);
+
+        // Randomize enum
+        config.search_algorithm = if rng.gen_bool(0.5) { SearchAlgorithm::Pvs } else { SearchAlgorithm::Mcts };
+
+        // Randomize numeric values with +/- 50% variance
+        config.mcts_simulations = vary_numeric(default_config.mcts_simulations as i32, &mut rng) as u32;
+        config.pawn_structure_weight = vary_numeric(default_config.pawn_structure_weight, &mut rng);
+        config.piece_mobility_weight = vary_numeric(default_config.piece_mobility_weight, &mut rng);
+        config.king_safety_weight = vary_numeric(default_config.king_safety_weight, &mut rng);
+        config.piece_development_weight = vary_numeric(default_config.piece_development_weight, &mut rng);
+        config.rook_placement_weight = vary_numeric(default_config.rook_placement_weight, &mut rng);
+        config.bishop_placement_weight = vary_numeric(default_config.bishop_placement_weight, &mut rng);
+        config.knight_placement_weight = vary_numeric(default_config.knight_placement_weight, &mut rng);
+        config.passed_pawn_weight = vary_numeric(default_config.passed_pawn_weight, &mut rng);
+        config.isolated_pawn_weight = vary_numeric(default_config.isolated_pawn_weight, &mut rng);
+        config.doubled_pawn_weight = vary_numeric(default_config.doubled_pawn_weight, &mut rng);
+        config.bishop_pair_weight = vary_numeric(default_config.bishop_pair_weight, &mut rng);
+        config.pawn_chain_weight = vary_numeric(default_config.pawn_chain_weight, &mut rng);
+        config.ram_weight = vary_numeric(default_config.ram_weight, &mut rng);
+        config.candidate_passed_pawn_weight = vary_numeric(default_config.candidate_passed_pawn_weight, &mut rng);
+        config.king_pawn_shield_weight = vary_numeric(default_config.king_pawn_shield_weight, &mut rng);
+        config.king_open_file_penalty = vary_numeric(default_config.king_open_file_penalty, &mut rng);
+        config.king_attackers_weight = vary_numeric(default_config.king_attackers_weight, &mut rng);
+        config.threat_analysis_weight = vary_numeric(default_config.threat_analysis_weight, &mut rng);
+        config.tempo_bonus_weight = vary_numeric(default_config.tempo_bonus_weight, &mut rng);
+        config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight, &mut rng);
+        config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight, &mut rng);
+
+        let file_path = generation_dir.join(format!("individual_{}.json", i));
+        let json = serde_json::to_string_pretty(&config).expect("Failed to serialize config");
+        fs::write(file_path, json).expect("Failed to write config file");
+    }
+}
+
+fn vary_numeric(value: i32, rng: &mut impl Rng) -> i32 {
+    let factor = rng.gen_range(-0.5..=0.5);
+    (value as f64 * (1.0 + factor)).round() as i32
+}
