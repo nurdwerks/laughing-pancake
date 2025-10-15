@@ -1,53 +1,48 @@
 // app/mod.rs
 
-use crate::{config, ga};
-use crate::game::{search::{SearchConfig, MoveTreeNode}, GameState};
+use crate::{ga::{self, EvolutionUpdate}};
+use crate::game::{search::{MoveTreeNode}};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
+use lazy_static::lazy_static;
+use std::sync::{Mutex};
 use ratatui::{prelude::*, Terminal, widgets::ListState};
-use shakmaty::{Chess, Color, Move, Outcome, Position, KnownOutcome};
-use shakmaty::uci::UciMove;
+use shakmaty::{Chess};
 use std::io;
-use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 use crossbeam_channel::{unbounded, Sender, Receiver};
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum GameMode {
-    PlayerVsAi,
-    AiVsAi,
+lazy_static! {
+    pub static ref TUI_WRITER_SENDER: Mutex<Option<Sender<String>>> = Mutex::new(None);
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum AppMode {
-    Game,
-    Config,
-    Evolve,
+pub struct TuiMakeWriter;
+
+impl TuiMakeWriter {
+    pub fn new() -> Self {
+        TuiMakeWriter
+    }
+}
+
+impl io::Write for TuiMakeWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let msg = String::from_utf8_lossy(buf).to_string();
+        if let Some(sender) = TUI_WRITER_SENDER.lock().unwrap().as_ref() {
+            sender.send(msg).unwrap();
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 pub struct App {
-    pub game_state: GameState,
     should_quit: bool,
-    pub user_input: String,
     pub error_message: Option<String>,
-    pub game_mode: GameMode,
-    pub game_result: Option<String>,
-    pub tablebase_path: Option<String>,
-    pub opening_book_path: Option<String>,
-    // App mode
-    pub mode: AppMode,
-    // AI configuration state
-    pub profiles: Vec<String>,
-    pub selected_profile_index: usize,
-    pub current_search_config: SearchConfig,
-    pub selected_config_line: usize,
-    // AI search state
-    is_ai_searching: bool,
-    ai_move_sender: Sender<Move>,
-    ai_move_receiver: Receiver<Move>,
     // Evolution state
-    pub is_evolving: bool,
     evolution_sender: Sender<ga::EvolutionUpdate>,
     pub evolution_receiver: Receiver<ga::EvolutionUpdate>,
     pub evolution_log: Vec<String>,
@@ -63,41 +58,17 @@ pub struct App {
     pub evolution_white_player: String,
     pub evolution_black_player: String,
     pub evolution_move_tree: Option<MoveTreeNode>,
+    log_receiver: Receiver<String>,
 }
 
 impl App {
-    pub fn new(tablebase_path: Option<String>, opening_book_path: Option<String>) -> Self {
-        let (game_state, warning) =
-            GameState::new(tablebase_path.clone(), opening_book_path.clone());
-        let profiles = config::get_profiles().unwrap_or_else(|_| vec!["default".to_string()]);
-        let default_config = SearchConfig::default();
-        let (ai_tx, ai_rx) = unbounded();
+    pub fn new(_tablebase_path: Option<String>, _opening_book_path: Option<String>, log_receiver: Receiver<String>) -> Self {
         let (evo_tx, evo_rx) = unbounded();
 
-        // Ensure the default profile exists
-        if !profiles.contains(&"default".to_string()) {
-            let _ = config::save_profile("default", &default_config);
-        }
-
         Self {
-            game_state,
             should_quit: false,
-            user_input: String::new(),
-            error_message: warning,
-            game_mode: GameMode::PlayerVsAi,
-            game_result: None,
-            tablebase_path,
-            opening_book_path,
-            mode: AppMode::Evolve,
-            profiles,
-            selected_profile_index: 0,
-            current_search_config: default_config,
-            selected_config_line: 0,
-            is_ai_searching: false,
-            ai_move_sender: ai_tx,
-            ai_move_receiver: ai_rx,
+            error_message: None,
             // Evolution state
-            is_evolving: false,
             evolution_sender: evo_tx,
             evolution_receiver: evo_rx,
             evolution_log: Vec::new(),
@@ -113,44 +84,21 @@ impl App {
             evolution_white_player: "".to_string(),
             evolution_black_player: "".to_string(),
             evolution_move_tree: None,
+            log_receiver,
         }
     }
 
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+        self.start_evolution();
         while !self.should_quit {
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events()?;
-
-        if self.is_evolving {
             self.handle_evolution_updates();
-        }
+            self.handle_log_updates();
 
-            if self.game_state.is_game_over() {
-                if self.game_result.is_none() {
-                    self.determine_game_result();
-                }
-            } else {
-                let turn = self.game_state.chess.turn();
-                let is_ai_turn = match self.game_mode {
-                    GameMode::PlayerVsAi => turn == Color::Black,
-                    GameMode::AiVsAi => true,
-                };
-
-                if is_ai_turn && !self.is_ai_searching {
-                    self.is_ai_searching = true;
-                    let game_state = self.game_state.clone();
-                    let sender = self.ai_move_sender.clone();
-                    thread::spawn(move || {
-                        if let Some(ai_move) = game_state.get_ai_move() {
-                            let _ = sender.send(ai_move);
-                        }
-                    });
-                }
-
-                if let Ok(ai_move) = self.ai_move_receiver.try_recv() {
-                    self.is_ai_searching = false;
-                    let uci_move = ai_move.to_uci(self.game_state.chess.castles().mode());
-                    self.game_state.make_move(&uci_move);
+            if let Some(handle) = &self.evolution_thread_handle {
+                if handle.is_finished() {
+                    self.should_quit = true;
                 }
             }
         }
@@ -161,73 +109,21 @@ impl App {
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == event::KeyEventKind::Press {
-                    match self.mode {
-                        AppMode::Config => self.handle_config_events(key.code),
-                        AppMode::Game => match key.code {
-                            KeyCode::Char('q') => {
-                                self.should_quit = true;
-                            }
-                            KeyCode::Char('c') => {
-                                self.mode = AppMode::Config;
-                            }
-                            KeyCode::Char('e') => {
-                                self.mode = AppMode::Evolve;
-                                self.start_evolution();
-                            }
-                            KeyCode::Char('s') => {
-                                self.game_mode = match self.game_mode {
-                                    GameMode::PlayerVsAi => GameMode::AiVsAi,
-                                    GameMode::AiVsAi => GameMode::PlayerVsAi,
-                                };
-                                let (game_state, warning) = GameState::new(
-                                    self.tablebase_path.clone(),
-                                    self.opening_book_path.clone(),
-                                );
-                                self.game_state = game_state;
-                                self.user_input.clear();
-                                self.error_message = warning;
-                                self.game_result = None;
-                            }
-                            KeyCode::Char(c) => {
-                                if self.game_mode == GameMode::PlayerVsAi {
-                                    self.user_input.push(c);
-                                    self.error_message = None;
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                if self.game_mode == GameMode::PlayerVsAi {
-                                    self.user_input.pop();
-                                }
-                            }
-                            KeyCode::Enter => {
-                                if self.game_mode == GameMode::PlayerVsAi {
-                                    self.handle_move_input();
-                                }
-                            }
-                            _ => {}
-                        },
-                        AppMode::Evolve => match key.code {
-                            KeyCode::Enter => {
-                                if !self.is_evolving {
-                                    self.start_evolution();
-                                }
-                            }
-                            KeyCode::Char('e') | KeyCode::Char('q') => {
-                                self.stop_evolution();
-                                self.mode = AppMode::Game;
-                            }
-                            KeyCode::Up => {
-                                let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_sub(1);
+                    match key.code {
+                        KeyCode::Char('q') => {
+                            self.should_quit = true;
+                        }
+                        KeyCode::Up => {
+                            let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_sub(1);
+                            self.evolution_log_state.select(Some(new_selection));
+                        }
+                        KeyCode::Down => {
+                            if !self.evolution_log.is_empty() {
+                                let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_add(1).min(self.evolution_log.len() - 1);
                                 self.evolution_log_state.select(Some(new_selection));
                             }
-                            KeyCode::Down => {
-                                if !self.evolution_log.is_empty() {
-                                    let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_add(1).min(self.evolution_log.len() - 1);
-                                    self.evolution_log_state.select(Some(new_selection));
-                                }
-                            }
-                            _ => {}
-                        },
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -235,135 +131,7 @@ impl App {
         Ok(())
     }
 
-    fn handle_move_input(&mut self) {
-        let input = self.user_input.trim();
-        if self.game_state.chess.turn() == Color::White {
-            match UciMove::from_str(input) {
-                Ok(uci_move) => {
-                    if self.game_state.make_move(&uci_move) {
-                        self.error_message = None;
-                    } else {
-                        self.error_message = Some("Illegal move".to_string());
-                    }
-                }
-                Err(_) => {
-                    self.error_message = Some("Invalid UCI format".to_string());
-                }
-            }
-        } else {
-            self.error_message = Some("Not your turn".to_string());
-        }
-        self.user_input.clear();
-    }
-
-    fn determine_game_result(&mut self) {
-        let outcome = self.game_state.chess.outcome();
-        self.game_result = match outcome {
-            Outcome::Known(KnownOutcome::Draw) => Some("Draw".to_string()),
-            Outcome::Known(KnownOutcome::Decisive { winner, .. }) => {
-                Some(format!("Checkmate! {:?} wins", winner))
-            }
-            Outcome::Unknown => None,
-        };
-    }
-
-    fn handle_config_events(&mut self, key_code: KeyCode) {
-        match key_code {
-            KeyCode::Char('c') | KeyCode::Esc => {
-                self.mode = AppMode::Game;
-            }
-            KeyCode::Up => {
-                if self.selected_profile_index > 0 {
-                    self.selected_profile_index -= 1;
-                }
-            }
-            KeyCode::Down => {
-                if self.selected_profile_index < self.profiles.len() - 1 {
-                    self.selected_profile_index += 1;
-                }
-            }
-            KeyCode::Enter => {
-                let profile_name = &self.profiles[self.selected_profile_index];
-                if let Ok(config) = config::load_profile(profile_name) {
-                    self.current_search_config = config;
-                    self.game_state.search_config = self.current_search_config.clone();
-                    self.mode = AppMode::Game;
-                } else {
-                    self.error_message = Some(format!("Failed to load profile: {}", profile_name));
-                }
-            }
-            KeyCode::Char('j') => {
-                self.selected_config_line = (self.selected_config_line + 1).min(31);
-            }
-            KeyCode::Char('k') => {
-                if self.selected_config_line > 0 {
-                    self.selected_config_line -= 1;
-                }
-            }
-            KeyCode::Char('l') => self.modify_config_value(true),
-            KeyCode::Char('h') => self.modify_config_value(false),
-            KeyCode::Char('s') => {
-                let profile_name = &self.profiles[self.selected_profile_index];
-                if config::save_profile(profile_name, &self.current_search_config).is_ok() {
-                    self.error_message = Some(format!("Profile saved: {}", profile_name));
-                } else {
-                    self.error_message = Some(format!("Failed to save profile: {}", profile_name));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn modify_config_value(&mut self, increase: bool) {
-        let config = &mut self.current_search_config;
-        use crate::game::search::SearchAlgorithm;
-        match self.selected_config_line {
-            0 => {
-                config.search_algorithm = match config.search_algorithm {
-                    SearchAlgorithm::Pvs => SearchAlgorithm::Mcts,
-                    SearchAlgorithm::Mcts => SearchAlgorithm::Pvs,
-                };
-            }
-            1 => config.mcts_simulations = if increase { (config.mcts_simulations + 100).min(10000) } else { (config.mcts_simulations.saturating_sub(100)).max(100) },
-            2 => config.use_aspiration_windows = !config.use_aspiration_windows,
-            3 => config.use_history_heuristic = !config.use_history_heuristic,
-            4 => config.use_killer_moves = !config.use_killer_moves,
-            5 => config.use_quiescence_search = !config.use_quiescence_search,
-            6 => config.use_pvs = !config.use_pvs,
-            7 => config.use_null_move_pruning = !config.use_null_move_pruning,
-            8 => config.use_lmr = !config.use_lmr,
-            9 => config.use_futility_pruning = !config.use_futility_pruning,
-            10 => config.use_delta_pruning = !config.use_delta_pruning,
-            11 => config.pawn_structure_weight = if increase { (config.pawn_structure_weight + 10).min(200) } else { (config.pawn_structure_weight - 10).max(0) },
-            12 => config.piece_mobility_weight = if increase { (config.piece_mobility_weight + 10).min(200) } else { (config.piece_mobility_weight - 10).max(0) },
-            13 => config.king_safety_weight = if increase { (config.king_safety_weight + 10).min(200) } else { (config.king_safety_weight - 10).max(0) },
-            14 => config.piece_development_weight = if increase { (config.piece_development_weight + 10).min(200) } else { (config.piece_development_weight - 10).max(0) },
-            15 => config.rook_placement_weight = if increase { (config.rook_placement_weight + 10).min(200) } else { (config.rook_placement_weight - 10).max(0) },
-            16 => config.bishop_placement_weight = if increase { (config.bishop_placement_weight + 10).min(200) } else { (config.bishop_placement_weight - 10).max(0) },
-            17 => config.knight_placement_weight = if increase { (config.knight_placement_weight + 10).min(200) } else { (config.knight_placement_weight - 10).max(0) },
-            18 => config.passed_pawn_weight = if increase { (config.passed_pawn_weight + 10).min(200) } else { (config.passed_pawn_weight - 10).max(0) },
-            19 => config.isolated_pawn_weight = if increase { (config.isolated_pawn_weight + 10).min(200) } else { (config.isolated_pawn_weight - 10).max(0) },
-            20 => config.doubled_pawn_weight = if increase { (config.doubled_pawn_weight + 10).min(200) } else { (config.doubled_pawn_weight - 10).max(0) },
-            21 => config.bishop_pair_weight = if increase { (config.bishop_pair_weight + 10).min(200) } else { (config.bishop_pair_weight - 10).max(0) },
-            22 => config.pawn_chain_weight = if increase { (config.pawn_chain_weight + 10).min(200) } else { (config.pawn_chain_weight - 10).max(0) },
-            23 => config.ram_weight = if increase { (config.ram_weight + 10).min(200) } else { (config.ram_weight - 10).max(0) },
-            24 => config.candidate_passed_pawn_weight = if increase { (config.candidate_passed_pawn_weight + 10).min(200) } else { (config.candidate_passed_pawn_weight - 10).max(0) },
-            25 => config.king_pawn_shield_weight = if increase { (config.king_pawn_shield_weight + 10).min(200) } else { (config.king_pawn_shield_weight - 10).max(0) },
-            26 => config.king_open_file_penalty = if increase { (config.king_open_file_penalty + 10).min(200) } else { (config.king_open_file_penalty - 10).max(0) },
-            27 => config.king_attackers_weight = if increase { (config.king_attackers_weight + 10).min(200) } else { (config.king_attackers_weight - 10).max(0) },
-            28 => config.threat_analysis_weight = if increase { (config.threat_analysis_weight + 10).min(200) } else { (config.threat_analysis_weight - 10).max(0) },
-            29 => config.tempo_bonus_weight = if increase { (config.tempo_bonus_weight + 1).min(50) } else { (config.tempo_bonus_weight - 1).max(0) },
-            30 => config.space_evaluation_weight = if increase { (config.space_evaluation_weight + 10).min(200) } else { (config.space_evaluation_weight - 10).max(0) },
-            31 => config.initiative_evaluation_weight = if increase { (config.initiative_evaluation_weight + 10).min(200) } else { (config.initiative_evaluation_weight - 10).max(0) },
-            _ => {}
-        }
-    }
-
     fn start_evolution(&mut self) {
-        if self.is_evolving {
-            return;
-        }
-        self.is_evolving = true;
         let evolution_manager = ga::EvolutionManager::new(self.evolution_sender.clone());
         let handle = thread::spawn(move || {
             evolution_manager.run();
@@ -371,69 +139,64 @@ impl App {
         self.evolution_thread_handle = Some(handle);
     }
 
-    fn stop_evolution(&mut self) {
-        if !self.is_evolving {
-            return;
+    fn handle_log_updates(&mut self) {
+        while let Ok(log_msg) = self.log_receiver.try_recv() {
+            self.evolution_log.push(log_msg.trim().to_string());
+            self.autoscroll_log();
         }
-        self.is_evolving = false;
-        // The thread will terminate on its own when the sender is dropped.
-        // We don't need to explicitly join the handle here,
-        // as it might block the UI thread if the evolution thread is busy.
-        // The handle is mainly for ensuring the thread is cleaned up when the app exits.
-        self.evolution_thread_handle = None;
     }
 
     fn handle_evolution_updates(&mut self) {
         while let Ok(update) = self.evolution_receiver.try_recv() {
-            let mut log_updated = false;
             match update {
-                ga::EvolutionUpdate::GenerationStarted(gen_index) => {
+                EvolutionUpdate::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 9900; // POPULATION_SIZE * (POPULATION_SIZE - 1)
-                    self.evolution_log.push(format!("Generation {} started.", gen_index));
-                    log_updated = true;
                 }
-                ga::EvolutionUpdate::MatchStarted(white_player, black_player) => {
+                EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
                     self.evolution_move_tree = None; // Clear the tree for the new match
                 }
-                ga::EvolutionUpdate::MatchCompleted(_game_match) => {
+                EvolutionUpdate::MatchCompleted(_game_match) => {
                     self.evolution_matches_completed += 1;
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
                     self.evolution_move_tree = None; // Clear tree after match
                 }
-                ga::EvolutionUpdate::ThinkingUpdate(pv, eval) => {
-                    self.evolution_log.push(format!("Thinking: {} (eval: {})", pv, eval));
+                EvolutionUpdate::ThinkingUpdate(pv, eval) => {
                     self.evolution_current_match_eval = eval;
                     if pv.starts_with("AI is thinking") {
                         self.evolution_move_tree = None; // Clear tree at the start of a new move search
                     }
-                    log_updated = true;
                 }
-                ga::EvolutionUpdate::MovePlayed(san, material, board) => {
+                EvolutionUpdate::MovePlayed(san, material, board) => {
                     self.evolution_current_match_san.push_str(&format!("{} ", san));
                     self.evolution_material_advantage = material;
                     self.evolution_current_match_board = Some(board);
                 }
-                ga::EvolutionUpdate::StatusUpdate(message) => {
+                EvolutionUpdate::StatusUpdate(message) => {
                     self.evolution_log.push(message);
-                    log_updated = true;
+                    self.autoscroll_log();
                 }
-                ga::EvolutionUpdate::MoveTreeUpdate(tree) => {
+                EvolutionUpdate::MoveTreeUpdate(tree) => {
                     self.evolution_move_tree = Some(tree);
                 }
-            }
-            if log_updated {
-                let log_len = self.evolution_log.len();
-                if log_len > 100 { // Keep the log at a max of 100 entries
-                    self.evolution_log.drain(0..log_len - 100);
+                EvolutionUpdate::Panic(msg) => {
+                    self.error_message = Some(format!("Evolution thread panicked: {}", msg));
+                    self.should_quit = true;
                 }
-                // Autoscroll to the bottom of the log
-                self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
             }
         }
+    }
+
+    fn autoscroll_log(&mut self) {
+        let log_len = self.evolution_log.len();
+        if log_len > 100 { // Keep the log at a max of 100 entries
+            self.evolution_log.drain(0..log_len - 100);
+        }
+        // Autoscroll to the bottom of the log
+        self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 }

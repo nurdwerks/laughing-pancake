@@ -13,6 +13,8 @@ const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
 const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
+use tracing::{info, instrument};
+
 #[derive(Debug, Clone)]
 pub enum EvolutionUpdate {
     GenerationStarted(u32),
@@ -22,6 +24,7 @@ pub enum EvolutionUpdate {
     MovePlayed(String, i32, Chess),      // SAN of the move, material difference, new board position
     StatusUpdate(String),
     MoveTreeUpdate(MoveTreeNode),
+    Panic(String),
 }
 
 /// Manages the evolution process in a background thread.
@@ -42,12 +45,27 @@ impl EvolutionManager {
     }
 
     pub fn run(&self) {
-        if self.run_internal().is_err() {
-            // The receiver has been dropped, so the thread can exit.
+        let result = std::panic::catch_unwind(|| {
+            if self.run_internal().is_err() {
+                // The receiver has been dropped, so the thread can exit.
+            }
+        });
+
+        if let Err(e) = result {
+            let panic_msg = if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "Unknown panic!".to_string()
+            };
+            let _ = self.update_sender.send(EvolutionUpdate::Panic(panic_msg));
         }
     }
 
+    #[instrument(skip(self))]
     fn run_internal(&self) -> Result<(), ()> {
+        info!("Starting evolution process");
         let mut generation_index = find_latest_complete_generation().unwrap_or(0);
         if generation_index > 0 {
              self.send_status(format!("Resuming from last completed generation: {}.", generation_index))?;
@@ -118,7 +136,9 @@ impl EvolutionManager {
     }
 
     /// Takes a completed tournament population and evolves it to create the next generation.
+    #[instrument(skip(self, population, next_generation_dir))]
     fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
+        info!("Evolving to the next generation");
         self.send_status("\nEvolving to the next generation...".to_string())?;
 
         // 1. Selection: Find the top 5 individuals
@@ -167,7 +187,9 @@ impl EvolutionManager {
     }
 
     /// Runs all the games in the tournament, saving progress after each game.
+    #[instrument(skip(self, population, generation, _generation_dir))]
     fn run_tournament(&self, population: &mut Population, generation: &mut Generation, _generation_dir: &Path) -> Result<(), ()> {
+        info!("Running tournament for generation {}", generation.generation_index);
         let total_matches = generation.matches.len();
         for i in 0..total_matches {
             if generation.matches[i].status == "completed" {
@@ -237,7 +259,9 @@ impl EvolutionManager {
     }
 
     /// Simulates a single game between two AI configurations.
+    #[instrument(skip(self, white_config, black_config))]
     fn play_game(&self, white_config: &SearchConfig, black_config: &SearchConfig) -> Result<(GameResult, String), ()> {
+        info!("Playing game");
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
