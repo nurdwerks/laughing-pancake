@@ -1,6 +1,7 @@
 //! Evaluation of a chess position.
 
 pub mod pst;
+pub mod space;
 pub mod pawn_structure;
 pub mod advanced_pawn_structure;
 pub mod mobility;
@@ -11,6 +12,7 @@ pub mod rooks;
 pub mod bishops;
 pub mod knights;
 pub mod threats;
+pub mod initiative;
 
 use shakmaty::{Board, Chess, Color, Piece, Position, Role};
 
@@ -148,14 +150,22 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
     white_score += threats::evaluate(board, Color::White) * config.threat_analysis_weight / 100;
     black_score += threats::evaluate(board, Color::Black) * config.threat_analysis_weight / 100;
 
+    white_score += space::evaluate(board, Color::White) * config.space_evaluation_weight / 100;
+    black_score += space::evaluate(board, Color::Black) * config.space_evaluation_weight / 100;
+
+    white_score += initiative::evaluate(board, Color::White) * config.initiative_evaluation_weight / 100;
+    black_score += initiative::evaluate(board, Color::Black) * config.initiative_evaluation_weight / 100;
+
     let total_score = white_score - black_score;
 
     // Return score from the perspective of the current player
-    if pos.turn() == Color::White {
+    let perspective_score = if pos.turn() == Color::White {
         total_score
     } else {
         -total_score
-    }
+    };
+
+    perspective_score + config.tempo_bonus_weight
 }
 
 #[cfg(test)]
