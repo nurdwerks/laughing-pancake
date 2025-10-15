@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 use self::search::SearchConfig;
 
 struct BookBuilder {
@@ -53,10 +54,11 @@ impl Visitor for BookBuilder {
     }
 }
 
+#[derive(Clone)]
 pub struct GameState {
     pub chess: Chess,
     pgn: String,
-    tablebase: Option<Tablebase<Chess>>,
+    tablebase: Option<Arc<Tablebase<Chess>>>,
     opening_book: Option<HashMap<Zobrist64, Vec<Move>>>,
     pub search_config: SearchConfig,
 }
@@ -76,7 +78,7 @@ impl GameState {
             } else if tb.max_pieces() == 0 {
                 warning = Some(format!("No tablebase files found in: {}", path));
             } else {
-                tablebase = Some(tb);
+                tablebase = Some(Arc::new(tb));
             }
         }
 

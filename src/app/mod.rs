@@ -5,12 +5,13 @@ use crate::game::{search::SearchConfig, GameState};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{prelude::*, Terminal};
-use shakmaty::{Color, Outcome, Position, KnownOutcome};
+use shakmaty::{Color, Move, Outcome, Position, KnownOutcome};
 use shakmaty::uci::UciMove;
 use std::io;
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
+use crossbeam_channel::{unbounded, Sender, Receiver};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum GameMode {
@@ -33,13 +34,19 @@ pub struct App {
     pub selected_profile_index: usize,
     pub current_search_config: SearchConfig,
     pub selected_config_line: usize,
+    // AI search state
+    is_ai_searching: bool,
+    ai_move_sender: Sender<Move>,
+    ai_move_receiver: Receiver<Move>,
 }
 
 impl App {
     pub fn new(tablebase_path: Option<String>, opening_book_path: Option<String>) -> Self {
-        let (game_state, warning) = GameState::new(tablebase_path.clone(), opening_book_path.clone());
+        let (game_state, warning) =
+            GameState::new(tablebase_path.clone(), opening_book_path.clone());
         let profiles = config::get_profiles().unwrap_or_else(|_| vec!["default".to_string()]);
         let default_config = SearchConfig::default();
+        let (tx, rx) = unbounded();
 
         // Ensure the default profile exists
         if !profiles.contains(&"default".to_string()) {
@@ -60,6 +67,9 @@ impl App {
             selected_profile_index: 0,
             current_search_config: default_config,
             selected_config_line: 0,
+            is_ai_searching: false,
+            ai_move_sender: tx,
+            ai_move_receiver: rx,
         }
     }
 
@@ -79,12 +89,21 @@ impl App {
                     GameMode::AiVsAi => true,
                 };
 
-                if is_ai_turn {
-                    if let Some(ai_move) = self.game_state.get_ai_move() {
-                        let uci_move = ai_move.to_uci(self.game_state.chess.castles().mode());
-                        self.game_state.make_move(&uci_move);
-                        thread::sleep(Duration::from_millis(500));
-                    }
+                if is_ai_turn && !self.is_ai_searching {
+                    self.is_ai_searching = true;
+                    let game_state = self.game_state.clone();
+                    let sender = self.ai_move_sender.clone();
+                    thread::spawn(move || {
+                        if let Some(ai_move) = game_state.get_ai_move() {
+                            let _ = sender.send(ai_move);
+                        }
+                    });
+                }
+
+                if let Ok(ai_move) = self.ai_move_receiver.try_recv() {
+                    self.is_ai_searching = false;
+                    let uci_move = ai_move.to_uci(self.game_state.chess.castles().mode());
+                    self.game_state.make_move(&uci_move);
                 }
             }
         }
