@@ -43,6 +43,13 @@ pub struct SearchConfig {
     pub isolated_pawn_weight: i32,
     pub doubled_pawn_weight: i32,
     pub bishop_pair_weight: i32,
+    pub pawn_chain_weight: i32,
+    pub ram_weight: i32,
+    pub candidate_passed_pawn_weight: i32,
+    pub king_pawn_shield_weight: i32,
+    pub king_open_file_penalty: i32,
+    pub king_attackers_weight: i32,
+    pub threat_analysis_weight: i32,
 }
 
 impl Default for SearchConfig {
@@ -70,6 +77,13 @@ impl Default for SearchConfig {
             isolated_pawn_weight: 100,
             doubled_pawn_weight: 100,
             bishop_pair_weight: 100,
+            pawn_chain_weight: 100,
+            ram_weight: 100,
+            candidate_passed_pawn_weight: 100,
+            king_pawn_shield_weight: 100,
+            king_open_file_penalty: 100,
+            king_attackers_weight: 100,
+            threat_analysis_weight: 100,
         }
     }
 }

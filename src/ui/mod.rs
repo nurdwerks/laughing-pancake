@@ -74,6 +74,16 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
         format!("Isolated Pawn Weight: {}", config.isolated_pawn_weight),
         format!("Doubled Pawn Weight: {}", config.doubled_pawn_weight),
         format!("Bishop Pair Weight: {}", config.bishop_pair_weight),
+        // New Advanced Pawn Structure Weights
+        format!("Pawn Chain Weight: {}", config.pawn_chain_weight),
+        format!("Ram Weight: {}", config.ram_weight),
+        format!("Candidate Passed Pawn Weight: {}", config.candidate_passed_pawn_weight),
+        // New Sophisticated King Safety Weights
+        format!("King Pawn Shield Weight: {}", config.king_pawn_shield_weight),
+        format!("King Open File Penalty: {}", config.king_open_file_penalty),
+        format!("King Attackers Weight: {}", config.king_attackers_weight),
+        // New Threat Analysis Weight
+        format!("Threat Analysis Weight: {}", config.threat_analysis_weight),
     ];
 
     let mut config_text = vec![Line::from(Span::styled(

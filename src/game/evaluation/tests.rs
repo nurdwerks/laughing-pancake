@@ -94,16 +94,16 @@ fn test_bishop_pair() {
 
 #[test]
 fn test_pawn_structure_evaluation() {
-    // White: Doubled pawns on b-file, isolated pawn on d-file, passed pawn on f-file
+    // White: Doubled pawns on b-file, isolated pawns on b and d, three candidate passed pawns
     let fen: Fen = "4k3/8/8/5p2/3P4/1P6/1P2K3/8 w - - 0 1".parse().unwrap();
     let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
     let config = SearchConfig::default();
     let score = pawn_structure::evaluate(pos.board(), shakmaty::Color::White, &config);
 
-    let expected_doubled_penalty = -config.doubled_pawn_weight / 100;
-    let expected_isolated_penalty = -config.isolated_pawn_weight / 100;
-    let expected_passed_bonus = config.passed_pawn_weight / 100;
-    let expected_score = expected_doubled_penalty + expected_isolated_penalty + expected_passed_bonus;
+    // Basic terms: -1 (doubled) - 3 (isolated) + 3 (passed) = -1
+    // Advanced terms: 0 (chains) + 0 (rams) + 45 (3 candidates) = 45
+    // Total expected score = 44
+    let expected_score = 44;
 
     assert_eq!(score, expected_score);
 }
@@ -142,4 +142,68 @@ fn test_knight_centralization() {
     let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
     let score = knights::evaluate(pos.board(), shakmaty::Color::White);
     assert_eq!(score, 10); // CENTRALIZATION_BONUS
+}
+
+#[test]
+fn test_pawn_chains() {
+    // White has a pawn chain on d4-e5
+    let fen: Fen = "4k3/8/8/4P3/3P4/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = advanced_pawn_structure::evaluate_pawn_chains(pos.board(), shakmaty::Color::White);
+    // The pawn on e5 is defended by the pawn on d4.
+    assert_eq!(score, 10); // PAWN_CHAIN_BONUS
+}
+
+#[test]
+fn test_pawn_rams() {
+    // White pawn on d4 is blocked by a black pawn on d5
+    let fen: Fen = "4k3/8/8/3p4/3P4/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = advanced_pawn_structure::evaluate_rams(pos.board(), shakmaty::Color::White);
+    assert_eq!(score, -5); // RAM_PENALTY
+}
+
+#[test]
+fn test_candidate_passed_pawn() {
+    // White pawn on d5 is a candidate passed pawn
+    let fen: Fen = "4k3/8/8/3P4/8/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = advanced_pawn_structure::evaluate_candidate_passed_pawns(pos.board(), shakmaty::Color::White);
+    assert_eq!(score, 15); // CANDIDATE_PASSED_PAWN_BONUS
+}
+
+#[test]
+fn test_king_safety_attackers() {
+    // Black queen and rook are attacking the white king zone
+    let fen: Fen = "4k3/8/8/8/8/8/6qr/K7 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let config = SearchConfig::default();
+    let score = king_safety::evaluate(pos.board(), shakmaty::Color::White, &config);
+    // The base penalty is calculated inside king_safety::evaluate_attackers
+    // Queen (900/4=225) + Rook (500/4=125) = 350 base penalty
+    // Attacker score: Queen (900/4=225). The rook on h2 is blocked by the queen.
+    // Open file penalty: 'a' file is open (25), 'b' file is open (25) = 50.
+    // Total penalty = - (225 * 1.0) - (50 * 1.0) = -275.
+    // The overall `king_safety_weight` is also applied.
+    assert_eq!(score, -275);
+}
+
+#[test]
+fn test_threat_analysis_undefended_piece() {
+    // Black knight on d5 is attacked by a white pawn on c4 and is undefended.
+    let fen: Fen = "4k3/8/8/3n4/2P5/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = threats::evaluate(pos.board(), shakmaty::Color::White);
+    // Bonus is 10% of the knight's value (320) = 32
+    assert_eq!(score, 32);
+}
+
+#[test]
+fn test_threat_analysis_good_trade() {
+    // Black rook on d5 is attacked by a white pawn on c4, but defended by a black pawn on e6.
+    let fen: Fen = "4k3/8/4p3/3r4/2P5/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = threats::evaluate(pos.board(), shakmaty::Color::White);
+    // Bonus is 5% of the rook's value (500) = 25, since pawn < rook.
+    assert_eq!(score, 25);
 }
