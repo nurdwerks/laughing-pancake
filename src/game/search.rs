@@ -4,7 +4,7 @@ pub mod quiescence;
 pub mod mcts;
 pub mod delta; // Still needed for quiescence search
 
-use shakmaty::{Chess, Move, Position, Piece};
+use shakmaty::{Chess, Move, Position, Piece, san::SanPlus};
 use crate::game::evaluation;
 use crossbeam_utils::thread;
 use num_cpus;
@@ -94,8 +94,15 @@ impl Default for SearchConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct MoveTreeNode {
+    pub move_san: String,
+    pub score: i32,
+    pub children: Vec<MoveTreeNode>,
+}
+
 pub trait Searcher {
-    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32);
+    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>);
 }
 
 #[derive(Clone)]
@@ -105,9 +112,10 @@ pub struct PvsSearcher {
 }
 
 impl Searcher for PvsSearcher {
-    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32) {
+    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
-            return self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
+            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
+            return (move_opt, score, Some(tree));
         }
 
         const ASPIRATION_WINDOW_DELTA: i32 = 50;
@@ -115,13 +123,13 @@ impl Searcher for PvsSearcher {
         let alpha = score_guess - ASPIRATION_WINDOW_DELTA;
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
-        let (mut best_move, mut score) = self.pvs_root_search(pos, depth, config, alpha, beta);
+        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta);
 
         if score <= alpha || score >= beta {
-            (best_move, score) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
+            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
         }
 
-        (best_move, score)
+        (best_move, score, Some(tree))
     }
 }
 
@@ -133,10 +141,15 @@ impl PvsSearcher {
         config: &SearchConfig,
         mut alpha: i32,
         beta: i32,
-    ) -> (Option<Move>, i32) {
+    ) -> (Option<Move>, i32, MoveTreeNode) {
         let mut legal_moves = pos.legal_moves();
+        let mut root_node = MoveTreeNode {
+            move_san: "root".to_string(),
+            score: 0,
+            children: Vec::new(),
+        };
         if legal_moves.is_empty() {
-            return (None, evaluation::evaluate(pos, config));
+            return (None, evaluation::evaluate(pos, config), root_node);
         }
         self.order_moves(&mut legal_moves, pos, 0, config);
 
@@ -151,21 +164,24 @@ impl PvsSearcher {
                 let tx = tx.clone();
 
                 s.spawn(move |_| {
-                    let mut chunk_best_move = None;
                     let mut chunk_alpha = -MATE_SCORE;
 
                     for m in moves_chunk {
                         let mut new_pos = pos.clone();
                         new_pos.play_unchecked(*m);
-                        let score = -searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
+                        let (score, child_node) = searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
+                        let score = -score;
 
                         if score > chunk_alpha {
                             chunk_alpha = score;
-                            chunk_best_move = Some(*m);
                         }
-                    }
-                    if let Some(bm) = chunk_best_move {
-                        tx.send((Some(bm), chunk_alpha)).unwrap();
+
+                        let san = SanPlus::from_move(pos.clone(), *m);
+                        tx.send(((Some(*m), score), MoveTreeNode {
+                            move_san: san.to_string(),
+                            score,
+                            children: child_node.children,
+                        })).unwrap();
                     }
                 });
             }
@@ -174,24 +190,26 @@ impl PvsSearcher {
         drop(tx);
 
         let mut best_move = None;
-        for (move_option, score) in rx.iter() {
+        for ((move_option, score), node) in rx.iter() {
+            root_node.children.push(node);
             if score > alpha {
                 alpha = score;
                 best_move = move_option;
             }
         }
 
-        (best_move, alpha)
+        root_node.score = alpha;
+        (best_move, alpha, root_node)
     }
 
-    fn alpha_beta(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn alpha_beta(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
         if config.use_null_move_pruning {
             return self.null_move_search(pos, depth, ply, alpha, beta, config);
         }
         self.pvs_search(pos, depth, ply, alpha, beta, config)
     }
 
-    fn null_move_search(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn null_move_search(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
         const NMP_DEPTH_REDUCTION: u8 = 3;
         const NMP_MIN_DEPTH: u8 = 3;
 
@@ -200,38 +218,50 @@ impl PvsSearcher {
 
         if depth >= NMP_MIN_DEPTH && !pos.is_check() && !is_likely_zugzwang {
             if let Ok(null_move_pos) = pos.clone().swap_turn() {
-                let score = -self.pvs_search(&null_move_pos, depth.saturating_sub(NMP_DEPTH_REDUCTION), ply + 1, -beta, -beta + 1, config);
+                let (score, _) = self.pvs_search(&null_move_pos, depth.saturating_sub(NMP_DEPTH_REDUCTION), ply + 1, -beta, -beta + 1, config);
+                let score = -score;
                 if score >= beta {
-                    return beta;
+                    return (beta, MoveTreeNode { move_san: "null".to_string(), score: beta, children: vec![] });
                 }
             }
         }
         self.pvs_search(pos, depth, ply, alpha, beta, config)
     }
 
-    fn pvs_search(&mut self, pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn pvs_search(&mut self, pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
         const LMR_MIN_DEPTH: u8 = 3;
         const LMR_MIN_MOVE_INDEX: usize = 2;
         const FUTILITY_MARGIN_PER_DEPTH: [i32; 4] = [0, 100, 250, 500];
 
+        let mut current_node = MoveTreeNode {
+            move_san: "".to_string(), // This will be set by the parent
+            score: alpha,
+            children: Vec::new(),
+        };
+
         let mut legal_moves = pos.legal_moves();
         if legal_moves.is_empty() {
-            if pos.is_checkmate() { return -MATE_SCORE + ply as i32; }
-            return 0; // Stalemate
+            if pos.is_checkmate() { return (-MATE_SCORE + ply as i32, current_node); }
+            return (0, current_node); // Stalemate
         }
 
         if depth == 0 {
-            if config.use_quiescence_search {
-                return quiescence::search(pos, alpha, beta, config);
-            }
-            return evaluation::evaluate(pos, config);
+            let score = if config.use_quiescence_search {
+                quiescence::search(pos, alpha, beta, config)
+            } else {
+                evaluation::evaluate(pos, config)
+            };
+            current_node.score = score;
+            return (score, current_node);
         }
 
         if config.use_futility_pruning && (depth as usize) < FUTILITY_MARGIN_PER_DEPTH.len() {
             let eval = evaluation::evaluate(pos, config);
             let margin = FUTILITY_MARGIN_PER_DEPTH[depth as usize];
             if eval + margin <= alpha {
-                return quiescence::search(pos, alpha, beta, config);
+                let score = quiescence::search(pos, alpha, beta, config);
+                current_node.score = score;
+                return (score, current_node)
             }
         }
 
@@ -241,8 +271,9 @@ impl PvsSearcher {
             let mut new_pos = pos.clone();
             new_pos.play_unchecked(m);
 
-            let score = if i == 0 {
-                -self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config)
+            let (score, child_node) = if i == 0 {
+                let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                (-s, cn)
             } else {
                 let mut reduction = 0;
                 if config.use_lmr && depth >= LMR_MIN_DEPTH && i >= LMR_MIN_MOVE_INDEX && !pos.is_check() && !m.is_capture() {
@@ -250,23 +281,34 @@ impl PvsSearcher {
                     reduction = reduction.min(depth - 1);
                 }
 
-                let zw_score = -self.alpha_beta(&mut new_pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, config);
+                let (zw_score, child_node) = self.alpha_beta(&mut new_pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, config);
+                let zw_score = -zw_score;
 
                 if zw_score > alpha && reduction > 0 {
-                    -self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -alpha - 1, -alpha, config)
+                    let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -alpha - 1, -alpha, config);
+                    (-s, cn)
                 } else if zw_score > alpha && zw_score < beta {
-                    -self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config)
+                    let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                    (-s, cn)
                 } else {
-                    zw_score
+                    (zw_score, child_node)
                 }
             };
+
+            let san = SanPlus::from_move(pos.clone(), m);
+            current_node.children.push(MoveTreeNode {
+                move_san: san.to_string(),
+                score,
+                children: child_node.children,
+            });
 
             if score >= beta {
                 if config.use_killer_moves && !m.is_capture() {
                     self.killer_moves[ply as usize][1] = self.killer_moves[ply as usize][0];
                     self.killer_moves[ply as usize][0] = Some(m);
                 }
-                return beta;
+                current_node.score = beta;
+                return (beta, current_node);
             }
             if score > alpha {
                 alpha = score;
@@ -278,7 +320,8 @@ impl PvsSearcher {
                 }
             }
         }
-        alpha
+        current_node.score = alpha;
+        (alpha, current_node)
     }
 
     fn get_piece_index(&self, piece: Piece) -> usize {
@@ -318,7 +361,7 @@ impl PvsSearcher {
 }
 
 use mcts::MctsSearcher;
-pub fn search(pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32) {
+pub fn search(pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
     match config.search_algorithm {
         SearchAlgorithm::Pvs => {
             let mut searcher = PvsSearcher {

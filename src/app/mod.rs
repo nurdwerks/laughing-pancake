@@ -1,7 +1,7 @@
 // app/mod.rs
 
 use crate::{config, ga};
-use crate::game::{search::SearchConfig, GameState};
+use crate::game::{search::{SearchConfig, MoveTreeNode}, GameState};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{prelude::*, Terminal};
@@ -61,6 +61,7 @@ pub struct App {
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_white_player: String,
     pub evolution_black_player: String,
+    pub evolution_move_tree: Option<MoveTreeNode>,
 }
 
 impl App {
@@ -109,6 +110,7 @@ impl App {
             evolution_thread_handle: None,
             evolution_white_player: "".to_string(),
             evolution_black_player: "".to_string(),
+            evolution_move_tree: None,
         }
     }
 
@@ -401,6 +403,9 @@ impl App {
                     if self.evolution_log.len() > 20 { // Keep the log from growing indefinitely
                         self.evolution_log.remove(0);
                     }
+                }
+                ga::EvolutionUpdate::MoveTreeUpdate(tree) => {
+                    self.evolution_move_tree = Some(tree);
                 }
             }
         }

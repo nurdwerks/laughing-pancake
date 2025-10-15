@@ -6,7 +6,7 @@ use shakmaty::{Chess, Position};
 use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::game::search::{self, SearchConfig, SearchAlgorithm};
+use crate::game::search::{self, SearchConfig, SearchAlgorithm, MoveTreeNode};
 use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
@@ -22,6 +22,7 @@ pub enum EvolutionUpdate {
     ThinkingUpdate(String, i32),  // Thinking message, evaluation
     MovePlayed(String, i32, Chess),      // SAN of the move, material difference, new board position
     StatusUpdate(String),
+    MoveTreeUpdate(MoveTreeNode),
 }
 
 /// Manages the evolution process in a background thread.
@@ -249,7 +250,10 @@ impl EvolutionManager {
             };
 
             // Send a "thinking" update
-            let (best_move, eval) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
+            let (best_move, eval, move_tree) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
+            if let Some(tree) = move_tree {
+                self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree)).map_err(|_| ())?;
+            }
             let thinking_msg = format!("AI is thinking for {:?}...", pos.turn());
             self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, eval)).map_err(|_| ())?;
 
