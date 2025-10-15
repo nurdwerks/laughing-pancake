@@ -57,6 +57,7 @@ pub struct App {
     pub evolution_current_match_board: Option<Chess>,
     pub evolution_current_match_eval: i32,
     pub evolution_current_match_san: String,
+    pub evolution_material_advantage: i32,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_white_player: String,
     pub evolution_black_player: String,
@@ -104,6 +105,7 @@ impl App {
             evolution_current_match_board: None,
             evolution_current_match_eval: 0,
             evolution_current_match_san: "".to_string(),
+            evolution_material_advantage: 0,
             evolution_thread_handle: None,
             evolution_white_player: "".to_string(),
             evolution_black_player: "".to_string(),
@@ -375,13 +377,19 @@ impl App {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
                 }
-                ga::EvolutionUpdate::MatchCompleted(game_match) => {
+                ga::EvolutionUpdate::MatchCompleted(_game_match) => {
                     self.evolution_matches_completed += 1;
-                    self.evolution_current_match_san = game_match.san;
+                    self.evolution_current_match_san.clear();
+                    self.evolution_material_advantage = 0;
                 }
-                ga::EvolutionUpdate::BoardUpdate(board, eval) => {
-                    self.evolution_current_match_board = Some(board);
+                ga::EvolutionUpdate::ThinkingUpdate(pv, eval) => {
+                    self.evolution_log.push(format!("Thinking: {} (eval: {})", pv, eval));
                     self.evolution_current_match_eval = eval;
+                }
+                ga::EvolutionUpdate::MovePlayed(san, material, board) => {
+                    self.evolution_current_match_san.push_str(&format!("{} ", san));
+                    self.evolution_material_advantage = material;
+                    self.evolution_current_match_board = Some(board);
                 }
                 ga::EvolutionUpdate::StatusUpdate(message) => {
                     self.evolution_log.push(message);
