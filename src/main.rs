@@ -1,10 +1,9 @@
 mod app;
-mod config;
 mod ui;
 mod game;
 mod ga;
 
-use app::App;
+use app::{App, TuiMakeWriter};
 use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -13,6 +12,7 @@ use crossterm::{
 };
 use ratatui::{prelude::*, Terminal};
 use std::{error::Error, io};
+use tracing_subscriber::{fmt, prelude::*};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -24,14 +24,25 @@ struct Args {
     /// Path to the PGN opening book file
     #[arg(long)]
     opening_book: Option<String>,
-
-    /// Run the genetic algorithm to evolve the AI
-    #[arg(long)]
-    evolve: bool,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+
+    // setup tracing
+    let (log_tx, log_rx) = crossbeam_channel::unbounded();
+    *app::TUI_WRITER_SENDER.lock().unwrap() = Some(log_tx);
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(TuiMakeWriter::new).with_filter(tracing_subscriber::filter::LevelFilter::INFO))
+        .init();
+
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info.payload().downcast_ref::<&str>().unwrap_or(&"");
+        let location = info.location().unwrap();
+        let msg = format!("panic occurred: {}, location: {}", payload, location);
+        tracing::error!("{}", msg);
+    }));
+
 
     // setup terminal
     enable_raw_mode()?;
@@ -41,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let mut app = App::new(args.tablebase_path, args.opening_book);
+    let mut app = App::new(args.tablebase_path, args.opening_book, log_rx);
     let res = app.run(&mut terminal);
 
     // restore terminal
@@ -55,6 +66,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     if let Err(err) = res {
         println!("{err:?}");
+    } else if let Some(err) = app.error_message {
+        println!("Application exited with an error: {}", err);
     }
 
     Ok(())
