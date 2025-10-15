@@ -7,11 +7,277 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::game::search::{self, SearchConfig, SearchAlgorithm};
+use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
 const FIXED_SEARCH_DEPTH: u8 = 5;
 const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
+
+#[derive(Debug, Clone)]
+pub enum EvolutionUpdate {
+    GenerationStarted(u32),
+    MatchStarted(String, String), // White player name, Black player name
+    MatchCompleted(Match),
+    BoardUpdate(Chess, i32), // Position, evaluation
+    StatusUpdate(String),
+}
+
+/// Manages the evolution process in a background thread.
+pub struct EvolutionManager {
+    update_sender: Sender<EvolutionUpdate>,
+}
+
+impl EvolutionManager {
+    pub fn new(update_sender: Sender<EvolutionUpdate>) -> Self {
+        Self { update_sender }
+    }
+
+    fn send_status(&self, message: String) -> Result<(), ()> {
+        if self.update_sender.send(EvolutionUpdate::StatusUpdate(message)).is_err() {
+            return Err(());
+        }
+        Ok(())
+    }
+
+    pub fn run(&self) {
+        if self.run_internal().is_err() {
+            // The receiver has been dropped, so the thread can exit.
+        }
+    }
+
+    fn run_internal(&self) -> Result<(), ()> {
+        let mut generation_index = find_latest_complete_generation().unwrap_or(0);
+        if generation_index > 0 {
+             self.send_status(format!("Resuming from last completed generation: {}.", generation_index))?;
+        }
+
+        // Special handling for first ever run.
+        if generation_index == 0 && !Path::new(EVOLUTION_DIR).join("generation_0/individual_99.json").exists() {
+            self.send_status("No existing population found. Generating initial population for Generation 0.".to_string())?;
+            let generation_dir = setup_directories(0);
+            generate_initial_population(&generation_dir);
+        }
+
+
+        loop {
+            self.send_status(format!("--- Starting Generation {} ---", generation_index))?;
+            self.update_sender.send(EvolutionUpdate::GenerationStarted(generation_index)).map_err(|_| ())?;
+            let generation_dir = setup_directories(generation_index);
+
+            self.send_status(format!("Loading population for generation {}...", generation_index))?;
+            let mut population = Population::load(&generation_dir);
+            self.send_status(format!("Loaded {} individuals.", population.individuals.len()))?;
+
+            let mut generation = self.load_or_create_generation(generation_index, &population)?;
+
+            self.run_tournament(&mut population, &mut generation, &generation_dir)?;
+
+            let next_generation_dir = setup_directories(generation_index + 1);
+            self.evolve_population(&population, &next_generation_dir)?;
+            self.send_status(format!("--- Generation {} Complete ---", generation_index))?;
+            generation_index += 1;
+        }
+    }
+
+    /// Loads a generation from a file, or creates a new one if it doesn't exist or is corrupt.
+    fn load_or_create_generation(&self, generation_index: u32, population: &Population) -> Result<Generation, ()> {
+        let file_path = Path::new(EVOLUTION_DIR)
+            .join(format!("generation_{}.json", generation_index));
+
+        if file_path.exists() {
+            let json = fs::read_to_string(&file_path);
+            if let Ok(json_content) = json {
+                let generation: Result<Generation, _> = serde_json::from_str(&json_content);
+                if let Ok(gen) = generation {
+                    self.send_status(format!("Successfully loaded existing match data for generation {}.", generation_index))?;
+                    return Ok(gen);
+                } else {
+                    self.send_status(format!("Warning: Found corrupt generation file at {:?}. Starting generation from scratch.", file_path))?;
+                }
+            } else {
+                 self.send_status(format!("Warning: Could not read generation file at {:?}. Starting generation from scratch.", file_path))?;
+            }
+        }
+
+        self.send_status(format!("No existing match data found for generation {}. Creating new tournament.", generation_index))?;
+        let games = generate_pairings(population);
+        let matches = games.into_iter().map(|game| Match {
+            white_player_name: format!("individual_{}.json", game.white_player_id),
+            black_player_name: format!("individual_{}.json", game.black_player_id),
+            status: "pending".to_string(),
+            result: "".to_string(),
+            san: "".to_string(),
+        }).collect();
+
+        Ok(Generation {
+            generation_index,
+            matches,
+        })
+    }
+
+    /// Takes a completed tournament population and evolves it to create the next generation.
+    fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
+        self.send_status("\nEvolving to the next generation...".to_string())?;
+
+        // 1. Selection: Find the top 5 individuals
+        let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
+        sorted_individuals.sort_by_key(|i| i.wins);
+        sorted_individuals.reverse(); // Highest wins first
+        let elites = &sorted_individuals[0..5];
+
+        self.send_status("Top 5 Elites (by wins):".to_string())?;
+        for (i, elite) in elites.iter().enumerate() {
+            self.send_status(format!(
+                "{}. Individual {} (Wins: {})",
+                i + 1,
+                elite.id,
+                elite.wins
+            ))?;
+        }
+
+        let mut rng = rand::thread_rng();
+
+        // 2. Elitism: Copy the top 5 to the next generation
+        for i in 0..5 {
+            let elite_config_path = next_generation_dir.join(format!("individual_{}.json", i));
+            let json = serde_json::to_string_pretty(&elites[i].config).expect("Failed to serialize elite config");
+            fs::write(elite_config_path, json).expect("Failed to write elite config file");
+        }
+
+        // 3. Breeding & 4. Mutation: Create the remaining 95 individuals
+        for i in 5..POPULATION_SIZE {
+            // Select two random parents from the elite pool
+            let parent1 = elites[rng.gen_range(0..elites.len())];
+            let parent2 = elites[rng.gen_range(0..elites.len())];
+
+            // Create the child by crossing over parameters
+            let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
+
+            // Mutate the child
+            mutate(&mut child_config, &mut rng);
+
+            let child_config_path = next_generation_dir.join(format!("individual_{}.json", i));
+            let json = serde_json::to_string_pretty(&child_config).expect("Failed to serialize child config");
+            fs::write(child_config_path, json).expect("Failed to write child config file");
+        }
+        self.send_status(format!("Generated and saved {} new individuals for the next generation.", POPULATION_SIZE))?;
+        Ok(())
+    }
+
+    /// Runs all the games in the tournament, saving progress after each game.
+    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, _generation_dir: &Path) -> Result<(), ()> {
+        let total_matches = generation.matches.len();
+        for i in 0..total_matches {
+            if generation.matches[i].status == "completed" {
+                self.send_status(format!("Skipping already completed game {}/{}.", i + 1, total_matches))?;
+                continue;
+            }
+
+            let white_player_name = generation.matches[i].white_player_name.clone();
+            let black_player_name = generation.matches[i].black_player_name.clone();
+
+            self.update_sender.send(EvolutionUpdate::MatchStarted(white_player_name.clone(), black_player_name.clone())).map_err(|_| ())?;
+
+            self.send_status(format!("Playing game {}/{} (White: {}, Black: {})...",
+                i + 1,
+                total_matches,
+                white_player_name,
+                black_player_name
+            ))?;
+
+            let white_id = parse_id_from_name(&white_player_name);
+            let black_id = parse_id_from_name(&black_player_name);
+
+            let white_config = &population.individuals[white_id].config;
+            let black_config = &population.individuals[black_id].config;
+
+            let (result, san) = self.play_game(white_config, black_config)?;
+
+            // Re-borrow mutably for the update
+            let current_match = &mut generation.matches[i];
+            current_match.san = san;
+            current_match.status = "completed".to_string();
+
+            match result {
+                GameResult::WhiteWin => {
+                    population.individuals[white_id].wins += 1;
+                    population.individuals[black_id].losses += 1;
+                    current_match.result = "1-0".to_string();
+                }
+                GameResult::BlackWin => {
+                    population.individuals[white_id].losses += 1;
+                    population.individuals[black_id].wins += 1;
+                    current_match.result = "0-1".to_string();
+                }
+                GameResult::Draw => {
+                    population.individuals[white_id].draws += 1;
+                    population.individuals[black_id].draws += 1;
+                    current_match.result = "1/2-1/2".to_string();
+                }
+            }
+
+            // The mutable borrow of `generation.matches[i]` is dropped here.
+            // Now we can save the whole generation.
+            save_generation(generation);
+            self.update_sender.send(EvolutionUpdate::MatchCompleted(generation.matches[i].clone())).map_err(|_| ())?;
+            self.send_status(format!("Finished game {}/{}. Progress saved.", i + 1, total_matches))?;
+        }
+
+        // Print final tournament results
+        self.send_status("\nTournament Results:".to_string())?;
+        for individual in &population.individuals {
+            self.send_status(format!(
+                "Individual {}: Wins={}, Losses={}, Draws={}",
+                individual.id, individual.wins, individual.losses, individual.draws
+            ))?;
+        }
+        Ok(())
+    }
+
+    /// Simulates a single game between two AI configurations.
+    fn play_game(&self, white_config: &SearchConfig, black_config: &SearchConfig) -> Result<(GameResult, String), ()> {
+        let mut pos = Chess::default();
+        let mut sans = Vec::new();
+
+        while !pos.is_game_over() {
+            let config = if pos.turn().is_white() {
+                white_config
+            } else {
+                black_config
+            };
+
+            let (best_move, eval) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
+
+            // Send board update before making the move
+            self.update_sender.send(EvolutionUpdate::BoardUpdate(pos.clone(), eval)).map_err(|_| ())?;
+
+            if let Some(m) = best_move {
+                sans.push(SanPlus::from_move_and_play_unchecked(&mut pos, m));
+            } else {
+                // No legal moves, but not game over? Should be stalemate.
+                break;
+            }
+        }
+
+        let outcome = pos.outcome();
+        let result = match outcome.winner() {
+            Some(shakmaty::Color::White) => GameResult::WhiteWin,
+            Some(shakmaty::Color::Black) => GameResult::BlackWin,
+            None => GameResult::Draw,
+        };
+
+        let mut pgn = String::new();
+        for (i, san) in sans.iter().enumerate() {
+            if i % 2 == 0 {
+                pgn.push_str(&format!("{}. ", i / 2 + 1));
+            }
+            pgn.push_str(&format!("{} ", san));
+        }
+
+        Ok((result, pgn))
+    }
+}
 
 /// Represents a single AI candidate in the population.
 pub struct Individual {
@@ -71,43 +337,6 @@ pub fn save_generation(generation: &Generation) {
     fs::write(file_path, json).expect("Failed to write generation state file");
 }
 
-/// Loads a generation from a file, or creates a new one if it doesn't exist or is corrupt.
-pub fn load_or_create_generation(generation_index: u32, population: &Population) -> Generation {
-    let file_path = Path::new(EVOLUTION_DIR)
-        .join(format!("generation_{}.json", generation_index));
-
-    if file_path.exists() {
-        let json = fs::read_to_string(&file_path);
-        if let Ok(json_content) = json {
-            let generation: Result<Generation, _> = serde_json::from_str(&json_content);
-            if let Ok(gen) = generation {
-                println!("Successfully loaded existing match data for generation {}.", generation_index);
-                return gen;
-            } else {
-                println!("Warning: Found corrupt generation file at {:?}. Starting generation from scratch.", file_path);
-            }
-        } else {
-             println!("Warning: Could not read generation file at {:?}. Starting generation from scratch.", file_path);
-        }
-    }
-
-    println!("No existing match data found for generation {}. Creating new tournament.", generation_index);
-    let games = generate_pairings(population);
-    let matches = games.into_iter().map(|game| Match {
-        white_player_name: format!("individual_{}.json", game.white_player_id),
-        black_player_name: format!("individual_{}.json", game.black_player_id),
-        status: "pending".to_string(),
-        result: "".to_string(),
-        san: "".to_string(),
-    }).collect();
-
-    Generation {
-        generation_index,
-        matches,
-    }
-}
-
-
 /// The main entry point for the evolutionary algorithm.
 /// Represents a single game to be played between two individuals.
 struct Game {
@@ -122,88 +351,13 @@ enum GameResult {
     Draw,
 }
 
-pub fn run() {
-    let mut generation_index = find_latest_complete_generation().unwrap_or(0);
-    if generation_index > 0 {
-         println!("Resuming from last completed generation: {}.", generation_index);
-    }
-
-    // Special handling for first ever run.
-    if generation_index == 0 && !Path::new(EVOLUTION_DIR).join("generation_0/individual_99.json").exists() {
-        println!("No existing population found. Generating initial population for Generation 0.");
-        let generation_dir = setup_directories(0);
-        generate_initial_population(&generation_dir);
-    }
-
-
-    loop {
-        println!("\n--- Starting Generation {} ---", generation_index);
-        let generation_dir = setup_directories(generation_index);
-
-        println!("Loading population for generation {}...", generation_index);
-        let mut population = Population::load(&generation_dir);
-        println!("Loaded {} individuals.", population.individuals.len());
-
-        let mut generation = load_or_create_generation(generation_index, &population);
-
-        run_tournament(&mut population, &mut generation, &generation_dir);
-
-        let next_generation_dir = setup_directories(generation_index + 1);
-        evolve_population(&population, &next_generation_dir);
-        println!("--- Generation {} Complete ---", generation_index);
-        generation_index += 1;
-    }
+/// Helper to extract the individual's ID from its filename.
+fn parse_id_from_name(name: &str) -> usize {
+    name.strip_prefix("individual_")
+        .and_then(|s| s.strip_suffix(".json"))
+        .and_then(|s| s.parse::<usize>().ok())
+        .expect("Failed to parse individual ID from filename")
 }
-
-
-/// Takes a completed tournament population and evolves it to create the next generation.
-fn evolve_population(population: &Population, next_generation_dir: &Path) {
-    println!("\nEvolving to the next generation...");
-
-    // 1. Selection: Find the top 5 individuals
-    let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
-    sorted_individuals.sort_by_key(|i| i.wins);
-    sorted_individuals.reverse(); // Highest wins first
-    let elites = &sorted_individuals[0..5];
-
-    println!("Top 5 Elites (by wins):");
-    for (i, elite) in elites.iter().enumerate() {
-        println!(
-            "{}. Individual {} (Wins: {})",
-            i + 1,
-            elite.id,
-            elite.wins
-        );
-    }
-
-    let mut rng = rand::thread_rng();
-
-    // 2. Elitism: Copy the top 5 to the next generation
-    for i in 0..5 {
-        let elite_config_path = next_generation_dir.join(format!("individual_{}.json", i));
-        let json = serde_json::to_string_pretty(&elites[i].config).expect("Failed to serialize elite config");
-        fs::write(elite_config_path, json).expect("Failed to write elite config file");
-    }
-
-    // 3. Breeding & 4. Mutation: Create the remaining 95 individuals
-    for i in 5..POPULATION_SIZE {
-        // Select two random parents from the elite pool
-        let parent1 = elites[rng.gen_range(0..elites.len())];
-        let parent2 = elites[rng.gen_range(0..elites.len())];
-
-        // Create the child by crossing over parameters
-        let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
-
-        // Mutate the child
-        mutate(&mut child_config, &mut rng);
-
-        let child_config_path = next_generation_dir.join(format!("individual_{}.json", i));
-        let json = serde_json::to_string_pretty(&child_config).expect("Failed to serialize child config");
-        fs::write(child_config_path, json).expect("Failed to write child config file");
-    }
-    println!("Generated and saved {} new individuals for the next generation.", POPULATION_SIZE);
-}
-
 
 /// Creates a new SearchConfig by randomly selecting parameters from two parents.
 fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
@@ -338,120 +492,6 @@ fn find_latest_complete_generation() -> Option<u32> {
             None
         })
         .max()
-}
-
-/// Runs all the games in the tournament, saving progress after each game.
-fn run_tournament(population: &mut Population, generation: &mut Generation, _generation_dir: &Path) {
-    let total_matches = generation.matches.len();
-    for i in 0..total_matches {
-        if generation.matches[i].status == "completed" {
-            println!("Skipping already completed game {}/{}.", i + 1, total_matches);
-            continue;
-        }
-
-        let white_player_name = generation.matches[i].white_player_name.clone();
-        let black_player_name = generation.matches[i].black_player_name.clone();
-
-        println!("Playing game {}/{} (White: {}, Black: {})...",
-            i + 1,
-            total_matches,
-            white_player_name,
-            black_player_name
-        );
-
-        let white_id = parse_id_from_name(&white_player_name);
-        let black_id = parse_id_from_name(&black_player_name);
-
-        let white_config = &population.individuals[white_id].config;
-        let black_config = &population.individuals[black_id].config;
-
-        let (result, san) = play_game(white_config, black_config);
-
-        // Re-borrow mutably for the update
-        let current_match = &mut generation.matches[i];
-        current_match.san = san;
-        current_match.status = "completed".to_string();
-
-        match result {
-            GameResult::WhiteWin => {
-                population.individuals[white_id].wins += 1;
-                population.individuals[black_id].losses += 1;
-                current_match.result = "1-0".to_string();
-            }
-            GameResult::BlackWin => {
-                population.individuals[white_id].losses += 1;
-                population.individuals[black_id].wins += 1;
-                current_match.result = "0-1".to_string();
-            }
-            GameResult::Draw => {
-                population.individuals[white_id].draws += 1;
-                population.individuals[black_id].draws += 1;
-                current_match.result = "1/2-1/2".to_string();
-            }
-        }
-
-        // The mutable borrow of `generation.matches[i]` is dropped here.
-        // Now we can save the whole generation.
-        save_generation(generation);
-        println!("Finished game {}/{}. Progress saved.", i + 1, total_matches);
-    }
-
-    // Print final tournament results
-    println!("\nTournament Results:");
-    for individual in &population.individuals {
-        println!(
-            "Individual {}: Wins={}, Losses={}, Draws={}",
-            individual.id, individual.wins, individual.losses, individual.draws
-        );
-    }
-}
-
-/// Helper to extract the individual's ID from its filename.
-fn parse_id_from_name(name: &str) -> usize {
-    name.strip_prefix("individual_")
-        .and_then(|s| s.strip_suffix(".json"))
-        .and_then(|s| s.parse::<usize>().ok())
-        .expect("Failed to parse individual ID from filename")
-}
-
-/// Simulates a single game between two AI configurations.
-fn play_game(white_config: &SearchConfig, black_config: &SearchConfig) -> (GameResult, String) {
-    let mut pos = Chess::default();
-    let mut sans = Vec::new();
-
-    while !pos.is_game_over() {
-        let config = if pos.turn().is_white() {
-            white_config
-        } else {
-            black_config
-        };
-
-        let (best_move, _) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
-
-        if let Some(m) = best_move {
-            sans.push(SanPlus::from_move_and_play_unchecked(&mut pos, m));
-        } else {
-            // No legal moves, but not game over? Should be stalemate.
-            break;
-        }
-    }
-
-    let outcome = pos.outcome();
-    let result = match outcome.winner() {
-        Some(shakmaty::Color::White) => GameResult::WhiteWin,
-        Some(shakmaty::Color::Black) => GameResult::BlackWin,
-        None => GameResult::Draw,
-    };
-
-    let mut pgn = String::new();
-    for (i, san) in sans.iter().enumerate() {
-        if i % 2 == 0 {
-            pgn.push_str(&format!("{}. ", i / 2 + 1));
-        }
-        pgn.push_str(&format!("{} ", san));
-    }
-
-    (result, pgn)
 }
 
 /// Generates all pairings for a round-robin tournament where each player plays every other player twice.

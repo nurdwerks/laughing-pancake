@@ -1,6 +1,5 @@
 // ui/mod.rs
 
-use crate::app::App;
 use ratatui::{
     prelude::*,
     style::{Color, Style, Modifier},
@@ -9,18 +8,109 @@ use ratatui::{
 use shakmaty::{File, Piece, Position, Rank, Role, Square};
 use std::str::FromStr;
 
-pub fn draw(frame: &mut Frame, app: &App) {
-    if app.show_ai_config {
-        draw_config_screen(frame, app);
-    } else {
-        let main_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
-            .split(frame.size());
+use crate::app::{App, AppMode};
+use ratatui::widgets::{Gauge, Wrap};
 
-        draw_board(frame, main_layout[0], app);
-        draw_game_info(frame, main_layout[1], app);
+pub fn draw(frame: &mut Frame, app: &mut App) {
+    match app.mode {
+        AppMode::Game => draw_game_screen(frame, app),
+        AppMode::Config => draw_config_screen(frame, app),
+        AppMode::Evolve => draw_evolve_screen(frame, app),
     }
+}
+
+fn draw_game_screen(frame: &mut Frame, app: &App) {
+    let main_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+        .split(frame.size());
+
+    draw_board(frame, main_layout[0], app);
+    draw_game_info(frame, main_layout[1], app);
+}
+
+fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
+    let main_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Progress bar and generation info
+            Constraint::Min(0),    // Main content
+            Constraint::Percentage(25), // Log
+        ])
+        .split(frame.size());
+
+    // --- Progress Bar and Generation Info ---
+    let progress_block = Block::default().borders(Borders::ALL).title(format!(
+        "Generation: {} | Matches: {}/{}",
+        app.evolution_current_generation,
+        app.evolution_matches_completed,
+        app.evolution_total_matches
+    ));
+    let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
+    let progress_bar = Gauge::default()
+        .block(progress_block)
+        .gauge_style(Style::default().fg(Color::Green))
+        .percent((progress * 100.0) as u16);
+    frame.render_widget(progress_bar, main_layout[0]);
+
+    // --- Main Content Area ---
+    let content_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(40), // Board
+            Constraint::Percentage(30), // Match Info
+            Constraint::Percentage(30), // SAN Movelist
+        ])
+        .split(main_layout[1]);
+
+    // Draw Board
+    let board_block = Block::default().borders(Borders::ALL).title("Current Match");
+    if let Some(board) = &app.evolution_current_match_board {
+        // Re-use the existing board drawing logic, but with the evolution board state
+        let mut temp_app = App::new(None, None);
+        temp_app.game_state.chess = board.clone();
+        draw_board(frame, content_layout[0], &temp_app);
+    } else {
+        frame.render_widget(board_block, content_layout[0]);
+    }
+
+    // Draw Match Info
+    let info_text = vec![
+        Line::from(vec![
+            Span::styled("Evaluation: ", Style::default().bold()),
+            Span::raw(format!("{}", app.evolution_current_match_eval)),
+        ]),
+        Line::from(vec![
+            Span::styled("White: ", Style::default().bold()),
+            Span::raw(&app.evolution_white_player),
+        ]),
+        Line::from(vec![
+            Span::styled("Black: ", Style::default().bold()),
+            Span::raw(&app.evolution_black_player),
+        ]),
+    ];
+    let info_widget = Paragraph::new(info_text)
+        .block(Block::default().borders(Borders::ALL).title("Match Info"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(info_widget, content_layout[1]);
+
+    // Draw SAN Movelist
+    let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())
+        .block(Block::default().borders(Borders::ALL).title("SAN"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(san_widget, content_layout[2]);
+
+
+    // --- Log View ---
+    let log_items: Vec<ListItem> = app
+        .evolution_log
+        .iter()
+        .map(|msg| ListItem::new(msg.as_str()))
+        .collect();
+    let log_list = List::new(log_items)
+        .block(Block::default().borders(Borders::ALL).title("Log"))
+        .direction(ratatui::widgets::ListDirection::BottomToTop);
+    frame.render_widget(log_list, main_layout[2]);
 }
 
 fn draw_config_screen(frame: &mut Frame, app: &App) {
