@@ -4,7 +4,7 @@ use crate::{config, ga};
 use crate::game::{search::{SearchConfig, MoveTreeNode}, GameState};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
-use ratatui::{prelude::*, Terminal};
+use ratatui::{prelude::*, Terminal, widgets::ListState};
 use shakmaty::{Chess, Color, Move, Outcome, Position, KnownOutcome};
 use shakmaty::uci::UciMove;
 use std::io;
@@ -51,6 +51,7 @@ pub struct App {
     evolution_sender: Sender<ga::EvolutionUpdate>,
     pub evolution_receiver: Receiver<ga::EvolutionUpdate>,
     pub evolution_log: Vec<String>,
+    pub evolution_log_state: ListState,
     pub evolution_current_generation: u32,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
@@ -100,6 +101,7 @@ impl App {
             evolution_sender: evo_tx,
             evolution_receiver: evo_rx,
             evolution_log: Vec::new(),
+            evolution_log_state: ListState::default(),
             evolution_current_generation: 0,
             evolution_matches_completed: 0,
             evolution_total_matches: 0,
@@ -213,6 +215,16 @@ impl App {
                             KeyCode::Char('e') | KeyCode::Char('q') => {
                                 self.stop_evolution();
                                 self.mode = AppMode::Game;
+                            }
+                            KeyCode::Up => {
+                                let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_sub(1);
+                                self.evolution_log_state.select(Some(new_selection));
+                            }
+                            KeyCode::Down => {
+                                if !self.evolution_log.is_empty() {
+                                    let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_add(1).min(self.evolution_log.len() - 1);
+                                    self.evolution_log_state.select(Some(new_selection));
+                                }
                             }
                             _ => {}
                         },
@@ -373,12 +385,14 @@ impl App {
 
     fn handle_evolution_updates(&mut self) {
         while let Ok(update) = self.evolution_receiver.try_recv() {
+            let mut log_updated = false;
             match update {
                 ga::EvolutionUpdate::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 9900; // POPULATION_SIZE * (POPULATION_SIZE - 1)
                     self.evolution_log.push(format!("Generation {} started.", gen_index));
+                    log_updated = true;
                 }
                 ga::EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;
@@ -397,6 +411,7 @@ impl App {
                     if pv.starts_with("AI is thinking") {
                         self.evolution_move_tree = None; // Clear tree at the start of a new move search
                     }
+                    log_updated = true;
                 }
                 ga::EvolutionUpdate::MovePlayed(san, material, board) => {
                     self.evolution_current_match_san.push_str(&format!("{} ", san));
@@ -405,13 +420,19 @@ impl App {
                 }
                 ga::EvolutionUpdate::StatusUpdate(message) => {
                     self.evolution_log.push(message);
-                    if self.evolution_log.len() > 20 { // Keep the log from growing indefinitely
-                        self.evolution_log.remove(0);
-                    }
+                    log_updated = true;
                 }
                 ga::EvolutionUpdate::MoveTreeUpdate(tree) => {
                     self.evolution_move_tree = Some(tree);
                 }
+            }
+            if log_updated {
+                let log_len = self.evolution_log.len();
+                if log_len > 100 { // Keep the log at a max of 100 entries
+                    self.evolution_log.drain(0..log_len - 100);
+                }
+                // Autoscroll to the bottom of the log
+                self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
             }
         }
     }
