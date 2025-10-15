@@ -84,6 +84,10 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
         format!("King Attackers Weight: {}", config.king_attackers_weight),
         // New Threat Analysis Weight
         format!("Threat Analysis Weight: {}", config.threat_analysis_weight),
+        // New evaluation terms
+        format!("Tempo Bonus Weight: {}", config.tempo_bonus_weight),
+        format!("Space Evaluation Weight: {}", config.space_evaluation_weight),
+        format!("Initiative Evaluation Weight: {}", config.initiative_evaluation_weight),
     ];
 
     let mut config_text = vec![Line::from(Span::styled(

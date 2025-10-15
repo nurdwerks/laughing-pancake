@@ -50,6 +50,9 @@ pub struct SearchConfig {
     pub king_open_file_penalty: i32,
     pub king_attackers_weight: i32,
     pub threat_analysis_weight: i32,
+    pub tempo_bonus_weight: i32,
+    pub space_evaluation_weight: i32,
+    pub initiative_evaluation_weight: i32,
 }
 
 impl Default for SearchConfig {
@@ -84,6 +87,9 @@ impl Default for SearchConfig {
             king_open_file_penalty: 100,
             king_attackers_weight: 100,
             threat_analysis_weight: 100,
+            tempo_bonus_weight: 10,
+            space_evaluation_weight: 100,
+            initiative_evaluation_weight: 100,
         }
     }
 }

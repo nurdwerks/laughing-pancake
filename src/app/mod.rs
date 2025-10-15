@@ -221,7 +221,7 @@ impl App {
                 }
             }
             KeyCode::Char('j') => {
-                self.selected_config_line = (self.selected_config_line + 1).min(28);
+                self.selected_config_line = (self.selected_config_line + 1).min(31);
             }
             KeyCode::Char('k') => {
                 if self.selected_config_line > 0 {
@@ -280,6 +280,9 @@ impl App {
             26 => config.king_open_file_penalty = if increase { (config.king_open_file_penalty + 10).min(200) } else { (config.king_open_file_penalty - 10).max(0) },
             27 => config.king_attackers_weight = if increase { (config.king_attackers_weight + 10).min(200) } else { (config.king_attackers_weight - 10).max(0) },
             28 => config.threat_analysis_weight = if increase { (config.threat_analysis_weight + 10).min(200) } else { (config.threat_analysis_weight - 10).max(0) },
+            29 => config.tempo_bonus_weight = if increase { (config.tempo_bonus_weight + 1).min(50) } else { (config.tempo_bonus_weight - 1).max(0) },
+            30 => config.space_evaluation_weight = if increase { (config.space_evaluation_weight + 10).min(200) } else { (config.space_evaluation_weight - 10).max(0) },
+            31 => config.initiative_evaluation_weight = if increase { (config.initiative_evaluation_weight + 10).min(200) } else { (config.initiative_evaluation_weight - 10).max(0) },
             _ => {}
         }
     }

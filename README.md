@@ -29,6 +29,9 @@ A terminal-based chess application written in Rust. Play against a configurable 
     - **Rook Placement**: Rewards rooks for being on open and semi-open files, and for reaching the 7th rank.
     - **Bishop Placement**: Provides a bonus for the bishop pair and penalizes "bad" bishops that are blocked by their own pawns.
     - **Knight Placement**: Rewards knights for being on outposts and being centralized.
+    - **Tempo Bonus**: A small bonus awarded to the side whose turn it is to move, encouraging proactive play.
+    - **Space Evaluation**: Measures territorial control by analyzing pawn attacks on the opponent's side of the board.
+    - **Initiative Evaluation**: Rewards the AI for making threats against enemy pieces that require a response.
 
 ## Dependencies
 

@@ -207,3 +207,62 @@ fn test_threat_analysis_good_trade() {
     // Bonus is 5% of the rook's value (500) = 25, since pawn < rook.
     assert_eq!(score, 25);
 }
+
+#[test]
+fn test_tempo_bonus() {
+    let pos = Chess::default(); // White to move
+    let mut config = SearchConfig::default();
+    config.tempo_bonus_weight = 15;
+
+    // To isolate the tempo bonus, we can't easily set all other weights to 0
+    // without a major refactor. Instead, we'll get the base evaluation
+    // and check that the tempo bonus is added correctly.
+
+    // Get the base score without the tempo bonus
+    let base_score = {
+        let mut temp_config = config.clone();
+        temp_config.tempo_bonus_weight = 0;
+        evaluate(&pos, &temp_config)
+    };
+
+    let score_with_bonus = evaluate(&pos, &config);
+    assert_eq!(score_with_bonus, base_score + 15);
+
+    // Test for black to move
+    let fen: Fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1".parse().unwrap();
+    let black_pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+
+    let base_score_black = {
+        let mut temp_config = config.clone();
+        temp_config.tempo_bonus_weight = 0;
+        evaluate(&black_pos, &temp_config)
+    };
+
+    let score_with_bonus_black = evaluate(&black_pos, &config);
+    // The evaluation is from the perspective of the current player, so the bonus is always positive.
+    assert_eq!(score_with_bonus_black, base_score_black + 15);
+}
+
+#[test]
+fn test_space_evaluation() {
+    // White pawns on c4 and e4 control b5, d5, and f5.
+    let fen: Fen = "4k3/8/8/8/2P1P3/8/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = space::evaluate(pos.board(), shakmaty::Color::White);
+
+    // 3 squares on opponent's side * 2 = 6
+    // 1 square in center (d5 is attacked by two pawns but counted once) * 5 = 5
+    // Total = 11
+    assert_eq!(score, 11);
+}
+
+#[test]
+fn test_initiative_evaluation() {
+    // White knight on e3 attacks black rook on d5.
+    let fen: Fen = "4kb2/8/8/3r4/8/4N3/8/4K3 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let score = initiative::evaluate(pos.board(), shakmaty::Color::White);
+
+    // Threat on a major piece (rook) = 25
+    assert_eq!(score, 25);
+}
