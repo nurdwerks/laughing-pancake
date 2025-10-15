@@ -52,6 +52,11 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
     // Draw config details
     let config = &app.current_search_config;
     let config_items = [
+        format!("Search Algorithm: {:?}", config.search_algorithm),
+        format!("MCTS Simulations: {}", config.mcts_simulations),
+        format!("Aspiration Windows: {}", config.use_aspiration_windows),
+        format!("History Heuristic: {}", config.use_history_heuristic),
+        format!("Killer Moves: {}", config.use_killer_moves),
         format!("Quiescence Search: {}", config.use_quiescence_search),
         format!("PVS: {}", config.use_pvs),
         format!("Null Move Pruning: {}", config.use_null_move_pruning),
@@ -65,6 +70,10 @@ fn draw_config_screen(frame: &mut Frame, app: &App) {
         format!("Rook Placement Weight: {}", config.rook_placement_weight),
         format!("Bishop Placement Weight: {}", config.bishop_placement_weight),
         format!("Knight Placement Weight: {}", config.knight_placement_weight),
+        format!("Passed Pawn Weight: {}", config.passed_pawn_weight),
+        format!("Isolated Pawn Weight: {}", config.isolated_pawn_weight),
+        format!("Doubled Pawn Weight: {}", config.doubled_pawn_weight),
+        format!("Bishop Pair Weight: {}", config.bishop_pair_weight),
     ];
 
     let mut config_text = vec![Line::from(Span::styled(

@@ -1,19 +1,16 @@
 // src/game/evaluation/pawn_structure.rs
 
 use shakmaty::{Board, Color, Piece, Role, Bitboard, File, Rank};
+use crate::game::search::SearchConfig;
 
-const DOUBLED_PAWN_PENALTY: i32 = 10;
-const ISOLATED_PAWN_PENALTY: i32 = 20;
-const PASSED_PAWN_BONUS: i32 = 50;
-
-pub fn evaluate(board: &Board, color: Color) -> i32 {
+pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {
     let mut score = 0;
     let our_pawns = board.by_piece(Piece { role: Role::Pawn, color });
     let their_pawns = board.by_piece(Piece { role: Role::Pawn, color: !color });
 
-    score -= count_doubled_pawns(our_pawns) * DOUBLED_PAWN_PENALTY;
-    score -= count_isolated_pawns(our_pawns) * ISOLATED_PAWN_PENALTY;
-    score += count_passed_pawns(color, our_pawns, their_pawns) * PASSED_PAWN_BONUS;
+    score -= count_doubled_pawns(our_pawns) * config.doubled_pawn_weight / 100;
+    score -= count_isolated_pawns(our_pawns) * config.isolated_pawn_weight / 100;
+    score += count_passed_pawns(color, our_pawns, their_pawns) * config.passed_pawn_weight / 100;
 
     score
 }

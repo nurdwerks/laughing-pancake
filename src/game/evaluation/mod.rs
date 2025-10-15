@@ -122,8 +122,8 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         }
     }
 
-    white_score += pawn_structure::evaluate(board, Color::White) * config.pawn_structure_weight / 100;
-    black_score += pawn_structure::evaluate(board, Color::Black) * config.pawn_structure_weight / 100;
+    white_score += pawn_structure::evaluate(board, Color::White, config) * config.pawn_structure_weight / 100;
+    black_score += pawn_structure::evaluate(board, Color::Black, config) * config.pawn_structure_weight / 100;
 
     white_score += mobility::evaluate(board, Color::White) * config.piece_mobility_weight / 100;
     black_score += mobility::evaluate(board, Color::Black) * config.piece_mobility_weight / 100;
@@ -137,8 +137,8 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
     white_score += rooks::evaluate(board, Color::White) * config.rook_placement_weight / 100;
     black_score += rooks::evaluate(board, Color::Black) * config.rook_placement_weight / 100;
 
-    white_score += bishops::evaluate(board, Color::White) * config.bishop_placement_weight / 100;
-    black_score += bishops::evaluate(board, Color::Black) * config.bishop_placement_weight / 100;
+    white_score += bishops::evaluate(board, Color::White, config) * config.bishop_placement_weight / 100;
+    black_score += bishops::evaluate(board, Color::Black, config) * config.bishop_placement_weight / 100;
 
     white_score += knights::evaluate(board, Color::White) * config.knight_placement_weight / 100;
     black_score += knights::evaluate(board, Color::Black) * config.knight_placement_weight / 100;

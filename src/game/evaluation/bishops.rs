@@ -1,12 +1,12 @@
 //! Evaluation terms for bishops.
 
 use shakmaty::{Board, Color, Piece, Role, Square, Bitboard};
+use crate::game::search::SearchConfig;
 
-const BISHOP_PAIR_BONUS: i32 = 50;
 const BAD_BISHOP_PENALTY: i32 = -10;
 
 /// Evaluates the placement of bishops.
-pub fn evaluate(board: &Board, color: Color) -> i32 {
+pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {
     let mut score = 0;
     let bishops = board.by_piece(Piece {
         role: Role::Bishop,
@@ -15,7 +15,7 @@ pub fn evaluate(board: &Board, color: Color) -> i32 {
 
     // Bishop pair bonus
     if bishops.count() >= 2 {
-        score += BISHOP_PAIR_BONUS;
+        score += config.bishop_pair_weight / 100;
     }
 
     // Bad bishop penalty

@@ -202,7 +202,7 @@ impl App {
                 }
             }
             KeyCode::Char('j') => {
-                self.selected_config_line = (self.selected_config_line + 1).min(12);
+                self.selected_config_line = (self.selected_config_line + 1).min(21);
             }
             KeyCode::Char('k') => {
                 if self.selected_config_line > 0 {
@@ -225,20 +225,35 @@ impl App {
 
     fn modify_config_value(&mut self, increase: bool) {
         let config = &mut self.current_search_config;
+        use crate::game::search::SearchAlgorithm;
         match self.selected_config_line {
-            0 => config.use_quiescence_search = !config.use_quiescence_search,
-            1 => config.use_pvs = !config.use_pvs,
-            2 => config.use_null_move_pruning = !config.use_null_move_pruning,
-            3 => config.use_lmr = !config.use_lmr,
-            4 => config.use_futility_pruning = !config.use_futility_pruning,
-            5 => config.use_delta_pruning = !config.use_delta_pruning,
-            6 => config.pawn_structure_weight = if increase { (config.pawn_structure_weight + 10).min(200) } else { (config.pawn_structure_weight - 10).max(0) },
-            7 => config.piece_mobility_weight = if increase { (config.piece_mobility_weight + 10).min(200) } else { (config.piece_mobility_weight - 10).max(0) },
-            8 => config.king_safety_weight = if increase { (config.king_safety_weight + 10).min(200) } else { (config.king_safety_weight - 10).max(0) },
-            9 => config.piece_development_weight = if increase { (config.piece_development_weight + 10).min(200) } else { (config.piece_development_weight - 10).max(0) },
-            10 => config.rook_placement_weight = if increase { (config.rook_placement_weight + 10).min(200) } else { (config.rook_placement_weight - 10).max(0) },
-            11 => config.bishop_placement_weight = if increase { (config.bishop_placement_weight + 10).min(200) } else { (config.bishop_placement_weight - 10).max(0) },
-            12 => config.knight_placement_weight = if increase { (config.knight_placement_weight + 10).min(200) } else { (config.knight_placement_weight - 10).max(0) },
+            0 => {
+                config.search_algorithm = match config.search_algorithm {
+                    SearchAlgorithm::Pvs => SearchAlgorithm::Mcts,
+                    SearchAlgorithm::Mcts => SearchAlgorithm::Pvs,
+                };
+            }
+            1 => config.mcts_simulations = if increase { (config.mcts_simulations + 100).min(10000) } else { (config.mcts_simulations.saturating_sub(100)).max(100) },
+            2 => config.use_aspiration_windows = !config.use_aspiration_windows,
+            3 => config.use_history_heuristic = !config.use_history_heuristic,
+            4 => config.use_killer_moves = !config.use_killer_moves,
+            5 => config.use_quiescence_search = !config.use_quiescence_search,
+            6 => config.use_pvs = !config.use_pvs,
+            7 => config.use_null_move_pruning = !config.use_null_move_pruning,
+            8 => config.use_lmr = !config.use_lmr,
+            9 => config.use_futility_pruning = !config.use_futility_pruning,
+            10 => config.use_delta_pruning = !config.use_delta_pruning,
+            11 => config.pawn_structure_weight = if increase { (config.pawn_structure_weight + 10).min(200) } else { (config.pawn_structure_weight - 10).max(0) },
+            12 => config.piece_mobility_weight = if increase { (config.piece_mobility_weight + 10).min(200) } else { (config.piece_mobility_weight - 10).max(0) },
+            13 => config.king_safety_weight = if increase { (config.king_safety_weight + 10).min(200) } else { (config.king_safety_weight - 10).max(0) },
+            14 => config.piece_development_weight = if increase { (config.piece_development_weight + 10).min(200) } else { (config.piece_development_weight - 10).max(0) },
+            15 => config.rook_placement_weight = if increase { (config.rook_placement_weight + 10).min(200) } else { (config.rook_placement_weight - 10).max(0) },
+            16 => config.bishop_placement_weight = if increase { (config.bishop_placement_weight + 10).min(200) } else { (config.bishop_placement_weight - 10).max(0) },
+            17 => config.knight_placement_weight = if increase { (config.knight_placement_weight + 10).min(200) } else { (config.knight_placement_weight - 10).max(0) },
+            18 => config.passed_pawn_weight = if increase { (config.passed_pawn_weight + 10).min(200) } else { (config.passed_pawn_weight - 10).max(0) },
+            19 => config.isolated_pawn_weight = if increase { (config.isolated_pawn_weight + 10).min(200) } else { (config.isolated_pawn_weight - 10).max(0) },
+            20 => config.doubled_pawn_weight = if increase { (config.doubled_pawn_weight + 10).min(200) } else { (config.doubled_pawn_weight - 10).max(0) },
+            21 => config.bishop_pair_weight = if increase { (config.bishop_pair_weight + 10).min(200) } else { (config.bishop_pair_weight - 10).max(0) },
             _ => {}
         }
     }

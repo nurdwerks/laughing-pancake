@@ -87,8 +87,25 @@ fn test_bishop_pair() {
     // White has a bishop pair
     let fen: Fen = "4k3/8/8/8/8/8/B7/B3K3 w - - 0 1".parse().unwrap();
     let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-    let score = bishops::evaluate(pos.board(), shakmaty::Color::White);
-    assert_eq!(score, 50); // BISHOP_PAIR_BONUS
+    let config = SearchConfig::default();
+    let score = bishops::evaluate(pos.board(), shakmaty::Color::White, &config);
+    assert_eq!(score, config.bishop_pair_weight / 100);
+}
+
+#[test]
+fn test_pawn_structure_evaluation() {
+    // White: Doubled pawns on b-file, isolated pawn on d-file, passed pawn on f-file
+    let fen: Fen = "4k3/8/8/5p2/3P4/1P6/1P2K3/8 w - - 0 1".parse().unwrap();
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let config = SearchConfig::default();
+    let score = pawn_structure::evaluate(pos.board(), shakmaty::Color::White, &config);
+
+    let expected_doubled_penalty = -config.doubled_pawn_weight / 100;
+    let expected_isolated_penalty = -config.isolated_pawn_weight / 100;
+    let expected_passed_bonus = config.passed_pawn_weight / 100;
+    let expected_score = expected_doubled_penalty + expected_isolated_penalty + expected_passed_bonus;
+
+    assert_eq!(score, expected_score);
 }
 
 #[test]
@@ -96,9 +113,11 @@ fn test_bad_bishop() {
     // White light-squared bishop is blocked by central pawns on light squares
     let fen: Fen = "4k3/8/8/8/3p4/3P4/B7/4K3 w - - 0 1".parse().unwrap();
     let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-    let score = bishops::evaluate(pos.board(), shakmaty::Color::White);
+    let config = SearchConfig::default();
+    let score = bishops::evaluate(pos.board(), shakmaty::Color::White, &config);
     // The pawn on d3 is on a light square, same as the bishop on a2.
     // This is just one pawn, so the penalty is -10.
+    // Bishop pair bonus is not applied, so the total score is just the penalty.
     assert_eq!(score, -10); // BAD_BISHOP_PENALTY
 }
 
