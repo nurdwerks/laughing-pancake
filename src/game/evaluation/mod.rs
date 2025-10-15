@@ -2,6 +2,7 @@
 
 pub mod pst;
 pub mod pawn_structure;
+pub mod advanced_pawn_structure;
 pub mod mobility;
 pub mod king_safety;
 pub mod development;
@@ -9,6 +10,7 @@ pub mod see;
 pub mod rooks;
 pub mod bishops;
 pub mod knights;
+pub mod threats;
 
 use shakmaty::{Board, Chess, Color, Piece, Position, Role};
 
@@ -128,8 +130,8 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
     white_score += mobility::evaluate(board, Color::White) * config.piece_mobility_weight / 100;
     black_score += mobility::evaluate(board, Color::Black) * config.piece_mobility_weight / 100;
 
-    white_score += king_safety::evaluate(board, Color::White) * config.king_safety_weight / 100;
-    black_score += king_safety::evaluate(board, Color::Black) * config.king_safety_weight / 100;
+    white_score += king_safety::evaluate(board, Color::White, config) * config.king_safety_weight / 100;
+    black_score += king_safety::evaluate(board, Color::Black, config) * config.king_safety_weight / 100;
 
     white_score += development::evaluate(board, Color::White) * config.piece_development_weight / 100;
     black_score += development::evaluate(board, Color::Black) * config.piece_development_weight / 100;
@@ -142,6 +144,9 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
 
     white_score += knights::evaluate(board, Color::White) * config.knight_placement_weight / 100;
     black_score += knights::evaluate(board, Color::Black) * config.knight_placement_weight / 100;
+
+    white_score += threats::evaluate(board, Color::White) * config.threat_analysis_weight / 100;
+    black_score += threats::evaluate(board, Color::Black) * config.threat_analysis_weight / 100;
 
     let total_score = white_score - black_score;
 

@@ -221,7 +221,7 @@ impl App {
                 }
             }
             KeyCode::Char('j') => {
-                self.selected_config_line = (self.selected_config_line + 1).min(21);
+                self.selected_config_line = (self.selected_config_line + 1).min(28);
             }
             KeyCode::Char('k') => {
                 if self.selected_config_line > 0 {
@@ -273,6 +273,13 @@ impl App {
             19 => config.isolated_pawn_weight = if increase { (config.isolated_pawn_weight + 10).min(200) } else { (config.isolated_pawn_weight - 10).max(0) },
             20 => config.doubled_pawn_weight = if increase { (config.doubled_pawn_weight + 10).min(200) } else { (config.doubled_pawn_weight - 10).max(0) },
             21 => config.bishop_pair_weight = if increase { (config.bishop_pair_weight + 10).min(200) } else { (config.bishop_pair_weight - 10).max(0) },
+            22 => config.pawn_chain_weight = if increase { (config.pawn_chain_weight + 10).min(200) } else { (config.pawn_chain_weight - 10).max(0) },
+            23 => config.ram_weight = if increase { (config.ram_weight + 10).min(200) } else { (config.ram_weight - 10).max(0) },
+            24 => config.candidate_passed_pawn_weight = if increase { (config.candidate_passed_pawn_weight + 10).min(200) } else { (config.candidate_passed_pawn_weight - 10).max(0) },
+            25 => config.king_pawn_shield_weight = if increase { (config.king_pawn_shield_weight + 10).min(200) } else { (config.king_pawn_shield_weight - 10).max(0) },
+            26 => config.king_open_file_penalty = if increase { (config.king_open_file_penalty + 10).min(200) } else { (config.king_open_file_penalty - 10).max(0) },
+            27 => config.king_attackers_weight = if increase { (config.king_attackers_weight + 10).min(200) } else { (config.king_attackers_weight - 10).max(0) },
+            28 => config.threat_analysis_weight = if increase { (config.threat_analysis_weight + 10).min(200) } else { (config.threat_analysis_weight - 10).max(0) },
             _ => {}
         }
     }

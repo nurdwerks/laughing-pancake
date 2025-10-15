@@ -2,6 +2,7 @@
 
 use shakmaty::{Board, Color, Piece, Role, Bitboard, File, Rank};
 use crate::game::search::SearchConfig;
+use super::advanced_pawn_structure;
 
 pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {
     let mut score = 0;
@@ -11,6 +12,11 @@ pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {
     score -= count_doubled_pawns(our_pawns) * config.doubled_pawn_weight / 100;
     score -= count_isolated_pawns(our_pawns) * config.isolated_pawn_weight / 100;
     score += count_passed_pawns(color, our_pawns, their_pawns) * config.passed_pawn_weight / 100;
+
+    // Add scores from advanced pawn structure analysis
+    score += advanced_pawn_structure::evaluate_pawn_chains(board, color) * config.pawn_chain_weight / 100;
+    score += advanced_pawn_structure::evaluate_rams(board, color) * config.ram_weight / 100;
+    score += advanced_pawn_structure::evaluate_candidate_passed_pawns(board, color) * config.candidate_passed_pawn_weight / 100;
 
     score
 }
