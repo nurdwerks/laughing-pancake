@@ -11,7 +11,6 @@ use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
-const FIXED_SEARCH_DEPTH: u8 = 5;
 const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
 #[derive(Debug, Clone)]
@@ -258,7 +257,7 @@ impl EvolutionManager {
 
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = search::search(&current_pos, FIXED_SEARCH_DEPTH, &config, Some(move_tree_tx));
+                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(move_tree_tx));
                     search_result_tx.send(search_result).unwrap();
                 });
 
@@ -423,6 +422,7 @@ fn parse_id_from_name(name: &str) -> usize {
 /// Creates a new SearchConfig by randomly selecting parameters from two parents.
 fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
     SearchConfig {
+        search_depth: if rng.gen_bool(0.5) { p1.search_depth } else { p2.search_depth },
         search_algorithm: if rng.gen_bool(0.5) { p1.search_algorithm.clone() } else { p2.search_algorithm.clone() },
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
@@ -460,6 +460,13 @@ fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> Search
 
 /// Applies mutation to a SearchConfig.
 fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
+    if rng.gen_bool(MUTATION_CHANCE) {
+        if rng.gen_bool(0.5) {
+            config.search_depth = config.search_depth.saturating_add(1);
+        } else {
+            config.search_depth = config.search_depth.saturating_sub(1);
+        }
+    }
     // Mutate booleans with a 3% chance
     if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }
     if rng.gen_bool(0.03) { config.use_history_heuristic = !config.use_history_heuristic; }
@@ -592,6 +599,8 @@ fn generate_initial_population(generation_dir: &Path) {
     for i in 0..POPULATION_SIZE {
         let mut config = SearchConfig::default();
         let default_config = SearchConfig::default(); // for reference values
+
+        config.search_depth = rng.gen_range(3..=7);
 
         // Randomize booleans
         config.use_aspiration_windows = rng.gen_bool(0.5);
