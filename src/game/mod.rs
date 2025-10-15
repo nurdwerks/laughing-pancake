@@ -193,7 +193,7 @@ impl GameState {
         }
 
         // Fallback to the new search function
-        let (best_move, _, _) = search::search(&self.chess, 2, &self.search_config);
+        let (best_move, _, _) = search::search(&self.chess, 2, &self.search_config, None);
         best_move
     }
 }

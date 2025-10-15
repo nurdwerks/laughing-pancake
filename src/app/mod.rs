@@ -383,15 +383,20 @@ impl App {
                 ga::EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
+                    self.evolution_move_tree = None; // Clear the tree for the new match
                 }
                 ga::EvolutionUpdate::MatchCompleted(_game_match) => {
                     self.evolution_matches_completed += 1;
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
+                    self.evolution_move_tree = None; // Clear tree after match
                 }
                 ga::EvolutionUpdate::ThinkingUpdate(pv, eval) => {
                     self.evolution_log.push(format!("Thinking: {} (eval: {})", pv, eval));
                     self.evolution_current_match_eval = eval;
+                    if pv.starts_with("AI is thinking") {
+                        self.evolution_move_tree = None; // Clear tree at the start of a new move search
+                    }
                 }
                 ga::EvolutionUpdate::MovePlayed(san, material, board) => {
                     self.evolution_current_match_san.push_str(&format!("{} ", san));

@@ -134,15 +134,46 @@ impl MctsSearcher {
             .max_by_key(|(_, &child_index)| self.tree[child_index].visits)
             .map(|(m, _)| *m)
     }
+
+    fn build_move_tree(&self, node_index: usize, pos: &Chess) -> MoveTreeNode {
+        let node = &self.tree[node_index];
+        let mut children = Vec::new();
+
+        for (m, &child_index) in &node.children {
+            let new_pos = pos.clone();
+            if let Ok(after_move_pos) = new_pos.play(*m) {
+                let child_node = self.build_move_tree(child_index, &after_move_pos);
+                children.push(child_node);
+            }
+        }
+
+        MoveTreeNode {
+            move_san: if let Some(parent_index) = node.parent {
+                let parent_node = &self.tree[parent_index];
+                parent_node.children.iter().find(|(_, &idx)| idx == node_index).map(|(m, _)| shakmaty::san::SanPlus::from_move(pos.clone(), *m).to_string()).unwrap_or_default()
+            } else {
+                "root".to_string()
+            },
+            score: (node.wins / node.visits.max(1) as f64 * 100.0) as i32,
+            children,
+        }
+    }
 }
 
 use super::MoveTreeNode;
+use crossbeam_channel::Sender;
 
 impl Searcher for MctsSearcher {
-    fn search(&mut self, pos: &Chess, _depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+    fn search(
+        &mut self,
+        pos: &Chess,
+        _depth: u8,
+        config: &SearchConfig,
+        move_tree_sender: Option<Sender<MoveTreeNode>>,
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         let root_index = 0;
 
-        for _ in 0..config.mcts_simulations {
+        for i in 0..config.mcts_simulations {
             // 1. Selection
             let (leaf_index, leaf_pos) = self.select(root_index, pos);
 
@@ -154,8 +185,17 @@ impl Searcher for MctsSearcher {
 
             // 4. Backpropagation
             self.backpropagate(leaf_index, result);
+
+            if i % 100 == 0 {
+                if let Some(sender) = &move_tree_sender {
+                    let tree = self.build_move_tree(root_index, pos);
+                    if sender.send(tree).is_err() {
+                        break;
+                    }
+                }
+            }
         }
 
-        (self.best_move(), 0, None) // MCTS doesn't typically provide a score in centipawns
+        (self.best_move(), 0, Some(self.build_move_tree(root_index, pos)))
     }
 }
