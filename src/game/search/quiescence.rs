@@ -1,5 +1,18 @@
 // src/game/search/quiescence.rs
 
+//! Quiescence Search
+//!
+//! Quiescence search is a specialized search that is typically performed at the
+//! leaf nodes of a regular alpha-beta search (i.e., when the main search depth
+//! reaches zero). Its purpose is to resolve tactical situations, such as capture
+//! sequences, to ensure that the evaluation of a position is not based on a
+//! volatile or unstable state. This helps to mitigate the "horizon effect,"
+//! where a negative event is pushed just beyond the search depth. This
+//! implementation focuses on searching only capture moves and uses Static
+//! Exchange Evaluation (SEE) to prune away captures that are likely to be
+//! unprofitable. It can also be configured to use Delta Pruning as a further
+//! optimization.
+
 use shakmaty::{Chess, Position};
 use crate::game::evaluation;
 use crate::game::evaluation::see::see;
