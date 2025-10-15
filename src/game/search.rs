@@ -4,8 +4,10 @@ pub mod quiescence;
 pub mod mcts;
 pub mod delta; // Still needed for quiescence search
 
-use shakmaty::{Chess, Move, Position, uci::UciMove, Role, Piece, Square};
+use shakmaty::{Chess, Move, Position, Piece};
 use crate::game::evaluation;
+use crossbeam_utils::thread;
+use num_cpus;
 
 const MATE_SCORE: i32 = 1_000_000;
 
@@ -76,6 +78,7 @@ pub trait Searcher {
     fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32);
 }
 
+#[derive(Clone)]
 pub struct PvsSearcher {
     history_table: [[i32; 64]; 12],
     killer_moves: [[Option<Move>; 2]; 64],
@@ -103,31 +106,65 @@ impl Searcher for PvsSearcher {
 }
 
 impl PvsSearcher {
-    fn pvs_root_search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig, mut alpha: i32, beta: i32) -> (Option<Move>, i32) {
-        let mut best_move = None;
+    fn pvs_root_search(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        config: &SearchConfig,
+        mut alpha: i32,
+        beta: i32,
+    ) -> (Option<Move>, i32) {
         let mut legal_moves = pos.legal_moves();
-
         if legal_moves.is_empty() {
             return (None, evaluation::evaluate(pos, config));
         }
-
         self.order_moves(&mut legal_moves, pos, 0, config);
 
-        for m in legal_moves {
-            let mut new_pos = pos.clone();
-            new_pos.play_unchecked(m);
-            let score = -self.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -alpha, config);
+        let num_threads = num_cpus::get();
+        let (tx, rx) = std::sync::mpsc::channel();
 
+        thread::scope(|s| {
+            for moves_chunk in legal_moves.chunks( (legal_moves.len() / num_threads).max(1) ) {
+                let pos = pos.clone();
+                let config = config.clone();
+                let mut searcher = self.clone();
+                let tx = tx.clone();
+
+                s.spawn(move |_| {
+                    let mut chunk_best_move = None;
+                    let mut chunk_alpha = -MATE_SCORE;
+
+                    for m in moves_chunk {
+                        let mut new_pos = pos.clone();
+                        new_pos.play_unchecked(*m);
+                        let score = -searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
+
+                        if score > chunk_alpha {
+                            chunk_alpha = score;
+                            chunk_best_move = Some(*m);
+                        }
+                    }
+                    if let Some(bm) = chunk_best_move {
+                        tx.send((Some(bm), chunk_alpha)).unwrap();
+                    }
+                });
+            }
+        }).unwrap();
+
+        drop(tx);
+
+        let mut best_move = None;
+        for (move_option, score) in rx.iter() {
             if score > alpha {
                 alpha = score;
-                best_move = Some(m);
+                best_move = move_option;
             }
         }
 
         (best_move, alpha)
     }
 
-    fn alpha_beta(&mut self, pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn alpha_beta(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
         if config.use_null_move_pruning {
             return self.null_move_search(pos, depth, ply, alpha, beta, config);
         }
