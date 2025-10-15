@@ -9,7 +9,26 @@ use shakmaty::{File, Piece, Position, Rank, Role, Square};
 use std::str::FromStr;
 
 use crate::app::{App, AppMode};
+use crate::game::search::MoveTreeNode;
 use ratatui::widgets::{Gauge, Wrap};
+
+fn format_move_tree(node: &MoveTreeNode, depth: usize) -> String {
+    let mut s = String::new();
+    let indent = "  ".repeat(depth);
+    s.push_str(&format!("{}{} (Score: {})\n", indent, node.move_san, node.score));
+
+    // To prevent the output from becoming too large, limit the depth and number of children shown
+    if depth < 3 {
+        let mut sorted_children = node.children.clone();
+        sorted_children.sort_by_key(|c| -c.score); // Show best moves first
+
+        for child in sorted_children.iter().take(5) { // Limit to top 5 children
+            s.push_str(&format_move_tree(child, depth + 1));
+        }
+    }
+    s
+}
+
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.mode {
@@ -55,13 +74,28 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
 
     // --- Main Content Area ---
     let content_layout = Layout::default()
-        .direction(Direction::Horizontal)
+        .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(40), // Board
-            Constraint::Percentage(30), // Match Info
-            Constraint::Percentage(30), // SAN Movelist
+            Constraint::Percentage(60), // Top row: Board and Move Tree
+            Constraint::Percentage(40), // Bottom row: Match Info and SAN
         ])
         .split(main_layout[1]);
+
+    let top_row_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // Board
+            Constraint::Percentage(50), // Move Tree
+        ])
+        .split(content_layout[0]);
+
+    let bottom_row_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // Match Info
+            Constraint::Percentage(50), // SAN Movelist
+        ])
+        .split(content_layout[1]);
 
     // Draw Board
     let board_block = Block::default().borders(Borders::ALL).title("Current Match");
@@ -69,10 +103,22 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         // Re-use the existing board drawing logic, but with the evolution board state
         let mut temp_app = App::new(None, None);
         temp_app.game_state.chess = board.clone();
-        draw_board(frame, content_layout[0], &temp_app);
+        draw_board(frame, top_row_layout[0], &temp_app);
     } else {
-        frame.render_widget(board_block, content_layout[0]);
+        frame.render_widget(board_block, top_row_layout[0]);
     }
+
+    // Draw Move Tree
+    let move_tree_block = Block::default().borders(Borders::ALL).title("Move Tree");
+    let move_tree_text = if let Some(tree) = &app.evolution_move_tree {
+        format_move_tree(tree, 0)
+    } else {
+        "Waiting for AI move...".to_string()
+    };
+    let move_tree_widget = Paragraph::new(move_tree_text)
+        .block(move_tree_block)
+        .wrap(Wrap { trim: true });
+    frame.render_widget(move_tree_widget, top_row_layout[1]);
 
     // Draw Match Info
     let info_text = vec![
@@ -96,13 +142,13 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let info_widget = Paragraph::new(info_text)
         .block(Block::default().borders(Borders::ALL).title("Match Info"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(info_widget, content_layout[1]);
+    frame.render_widget(info_widget, bottom_row_layout[0]);
 
     // Draw SAN Movelist
     let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())
         .block(Block::default().borders(Borders::ALL).title("SAN"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(san_widget, content_layout[2]);
+    frame.render_widget(san_widget, bottom_row_layout[1]);
 
 
     // --- Log View ---

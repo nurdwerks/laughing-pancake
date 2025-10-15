@@ -136,8 +136,10 @@ impl MctsSearcher {
     }
 }
 
+use super::MoveTreeNode;
+
 impl Searcher for MctsSearcher {
-    fn search(&mut self, pos: &Chess, _depth: u8, config: &SearchConfig) -> (Option<Move>, i32) {
+    fn search(&mut self, pos: &Chess, _depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         let root_index = 0;
 
         for _ in 0..config.mcts_simulations {
@@ -154,6 +156,6 @@ impl Searcher for MctsSearcher {
             self.backpropagate(leaf_index, result);
         }
 
-        (self.best_move(), 0) // MCTS doesn't typically provide a score in centipawns
+        (self.best_move(), 0, None) // MCTS doesn't typically provide a score in centipawns
     }
 }
