@@ -2,12 +2,15 @@
 
 //! Null Move Pruning
 //!
-//! This is a stub for the null move pruning algorithm. This is a technique
-//! used to reduce the search space by assuming that if a player can make a "null"
-//! move (i.e., pass their turn) and still have a score that is high enough to
-//! cause a beta cutoff, then the current position is likely very strong, and
-//! a full search is unnecessary. This is a powerful pruning technique but can
-//! fail in zugzwang positions.
+//! Null Move Pruning (NMP) is a search reduction technique that works by
+//! making a "null" or "pass" move for the current player and then performing
+//! a search with reduced depth. The idea is that if the position remains
+//! strong enough to cause a beta cutoff even after passing the turn, the
+//! current position is likely so advantageous that a full search is not
+//! needed. This implementation includes several safeguards to prevent NMP
+//! from being used in unsuitable situations, such as when in check or in
+//! potential zugzwang positions. If NMP is not applicable or does not result
+//! in a cutoff, the search falls back to a standard PVS search.
 
 use shakmaty::{Chess, Position};
 

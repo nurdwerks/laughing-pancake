@@ -2,13 +2,14 @@
 
 //! Delta Pruning
 //!
-//! This is a stub for the delta pruning algorithm. Delta pruning is a forward
-//! pruning technique similar to futility pruning, often used in quiescence search.
-//! It is based on the idea that if the material difference between the two sides
-//! is very large, then some moves (like captures of minor pieces) might not be
-//! enough to change the outcome of the evaluation. If a move's potential material
-//! gain plus a "delta" margin is still not enough to improve the score, it can
-//! be pruned.
+//! Delta pruning is a forward pruning technique primarily used in quiescence
+//! search to reduce the search space. The core idea is to prune moves that are
+//! unlikely to significantly improve the current position's score. This is
+//! achieved by adding a "delta" margin (e.g., the value of a queen) to the
+//! current evaluation. If this adjusted score is still below alpha, it suggests
+//! that even a significant material gain from the opponent would not be enough
+//! to change the outcome, so the node can be pruned. This implementation is
+//! specifically used within the quiescence search.
 
 use shakmaty::{Chess, Position};
 use crate::game::evaluation;

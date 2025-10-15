@@ -2,12 +2,15 @@
 
 //! Principal Variation Search (PVS)
 //!
-//! This is a stub for the PVS algorithm. PVS is an optimization of alpha-beta
-//! search that can be more efficient in practice. It assumes that the first
-//! move checked is the best one and searches it with a full alpha-beta window.
-//! Subsequent moves are then searched with a "zero window" (alpha = beta - 1)
-//! to prove that they are worse than the first move. If a move is found to be
-//! better, it is re-searched with a full window.
+//! PVS is an optimization of the alpha-beta algorithm that improves search
+//! efficiency. It operates on the assumption that the first move checked will
+//! likely be the best one. This move is searched with a full alpha-beta window.
+//! All subsequent moves are then searched with a narrower "zero window"
+//! (where beta = alpha + 1) to quickly prove they are inferior. If a move
+//! searched with a zero window is found to be better than alpha, it is then
+//! re-searched with the full window to get a more accurate score. This module
+//! also integrates Late Move Reductions (LMR) and Futility Pruning for
+//! additional search optimizations.
 
 use shakmaty::{Chess, Position};
 
