@@ -21,6 +21,7 @@ pub enum SearchAlgorithm {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchConfig {
+    pub search_depth: u8,
     pub search_algorithm: SearchAlgorithm,
     pub use_aspiration_windows: bool,
     pub use_history_heuristic: bool,
@@ -58,6 +59,7 @@ pub struct SearchConfig {
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
+            search_depth: 5,
             search_algorithm: SearchAlgorithm::Pvs,
             use_aspiration_windows: false,
             use_history_heuristic: false,
