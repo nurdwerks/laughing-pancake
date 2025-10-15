@@ -244,31 +244,56 @@ impl EvolutionManager {
 
         while !pos.is_game_over() {
             let config = if pos.turn().is_white() {
-                white_config
+                white_config.clone()
             } else {
-                black_config
+                black_config.clone()
             };
+            let current_pos = pos.clone();
 
-            // Send a "thinking" update
-            let (best_move, eval, move_tree) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
-            if let Some(tree) = move_tree {
-                self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree)).map_err(|_| ())?;
-            }
-            let thinking_msg = format!("AI is thinking for {:?}...", pos.turn());
-            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, eval)).map_err(|_| ())?;
+            let (move_tree_tx, move_tree_rx) = crossbeam_channel::unbounded();
+            let (search_result_tx, search_result_rx) = crossbeam_channel::unbounded();
 
-            if let Some(m) = best_move {
-                let san = SanPlus::from_move(pos.clone(), m);
-                let san_string = san.to_string();
-                pos.play_unchecked(m);
-                sans.push(san);
+            let thinking_msg = format!("AI is thinking for {:?}...", current_pos.turn());
+            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, 0)).map_err(|_| ())?;
 
-                let material_diff = calculate_material_difference(&pos);
-                self.update_sender.send(EvolutionUpdate::MovePlayed(san_string, material_diff, pos.clone())).map_err(|_| ())?;
-            } else {
-                // No legal moves, but not game over? Should be stalemate.
-                break;
-            }
+            crossbeam_utils::thread::scope(|s| {
+                s.spawn(|_| {
+                    let search_result = search::search(&current_pos, FIXED_SEARCH_DEPTH, &config, Some(move_tree_tx));
+                    search_result_tx.send(search_result).unwrap();
+                });
+
+                loop {
+                    crossbeam_channel::select! {
+                        recv(move_tree_rx) -> msg => {
+                            if let Ok(tree) = msg {
+                                if self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree)).is_err() {
+                                    break;
+                                }
+                            }
+                        },
+                        recv(search_result_rx) -> msg => {
+                            if let Ok((best_move, eval, final_tree)) = msg {
+                                if let Some(tree) = final_tree {
+                                    let _ = self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree));
+                                }
+                                let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
+                                if let Some(m) = best_move {
+                                    let san = SanPlus::from_move(pos.clone(), m);
+                                    sans.push(san);
+                                    pos.play_unchecked(m);
+
+                                    let material_diff = calculate_material_difference(&pos);
+                                    let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
+                                    if self.update_sender.send(EvolutionUpdate::MovePlayed(last_san, material_diff, pos.clone())).is_err() {
+                                        // The error will be handled by the outer loop's break condition.
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }).unwrap();
         }
 
         let outcome = pos.outcome();

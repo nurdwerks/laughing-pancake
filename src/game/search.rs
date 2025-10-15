@@ -101,8 +101,16 @@ pub struct MoveTreeNode {
     pub children: Vec<MoveTreeNode>,
 }
 
+use crossbeam_channel::Sender;
+
 pub trait Searcher {
-    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>);
+    fn search(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        config: &SearchConfig,
+        move_tree_sender: Option<Sender<MoveTreeNode>>,
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>);
 }
 
 #[derive(Clone)]
@@ -112,9 +120,15 @@ pub struct PvsSearcher {
 }
 
 impl Searcher for PvsSearcher {
-    fn search(&mut self, pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+    fn search(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        config: &SearchConfig,
+        move_tree_sender: Option<Sender<MoveTreeNode>>,
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
-            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
+            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, move_tree_sender);
             return (move_opt, score, Some(tree));
         }
 
@@ -123,10 +137,10 @@ impl Searcher for PvsSearcher {
         let alpha = score_guess - ASPIRATION_WINDOW_DELTA;
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
-        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta);
+        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta, move_tree_sender.clone());
 
         if score <= alpha || score >= beta {
-            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE);
+            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, move_tree_sender);
         }
 
         (best_move, score, Some(tree))
@@ -141,6 +155,7 @@ impl PvsSearcher {
         config: &SearchConfig,
         mut alpha: i32,
         beta: i32,
+        move_tree_sender: Option<Sender<MoveTreeNode>>,
     ) -> (Option<Move>, i32, MoveTreeNode) {
         let mut legal_moves = pos.legal_moves();
         let mut root_node = MoveTreeNode {
@@ -169,7 +184,8 @@ impl PvsSearcher {
                     for m in moves_chunk {
                         let mut new_pos = pos.clone();
                         new_pos.play_unchecked(*m);
-                        let (score, child_node) = searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
+                        let (score, child_node) =
+                            searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
                         let score = -score;
 
                         if score > chunk_alpha {
@@ -177,15 +193,20 @@ impl PvsSearcher {
                         }
 
                         let san = SanPlus::from_move(pos.clone(), *m);
-                        tx.send(((Some(*m), score), MoveTreeNode {
-                            move_san: san.to_string(),
-                            score,
-                            children: child_node.children,
-                        })).unwrap();
+                        tx.send((
+                            (Some(*m), score),
+                            MoveTreeNode {
+                                move_san: san.to_string(),
+                                score,
+                                children: child_node.children,
+                            },
+                        ))
+                        .unwrap();
                     }
                 });
             }
-        }).unwrap();
+        })
+        .unwrap();
 
         drop(tx);
 
@@ -196,20 +217,42 @@ impl PvsSearcher {
                 alpha = score;
                 best_move = move_option;
             }
+            if let Some(sender) = &move_tree_sender {
+                if sender.send(root_node.clone()).is_err() {
+                    // Stop searching if the receiver has been dropped
+                    break;
+                }
+            }
         }
 
         root_node.score = alpha;
         (best_move, alpha, root_node)
     }
 
-    fn alpha_beta(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
+    fn alpha_beta(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        ply: u8,
+        alpha: i32,
+        beta: i32,
+        config: &SearchConfig,
+    ) -> (i32, MoveTreeNode) {
         if config.use_null_move_pruning {
             return self.null_move_search(pos, depth, ply, alpha, beta, config);
         }
         self.pvs_search(pos, depth, ply, alpha, beta, config)
     }
 
-    fn null_move_search(&mut self, pos: &Chess, depth: u8, ply: u8, alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
+    fn null_move_search(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        ply: u8,
+        alpha: i32,
+        beta: i32,
+        config: &SearchConfig,
+    ) -> (i32, MoveTreeNode) {
         const NMP_DEPTH_REDUCTION: u8 = 3;
         const NMP_MIN_DEPTH: u8 = 3;
 
@@ -218,7 +261,14 @@ impl PvsSearcher {
 
         if depth >= NMP_MIN_DEPTH && !pos.is_check() && !is_likely_zugzwang {
             if let Ok(null_move_pos) = pos.clone().swap_turn() {
-                let (score, _) = self.pvs_search(&null_move_pos, depth.saturating_sub(NMP_DEPTH_REDUCTION), ply + 1, -beta, -beta + 1, config);
+                let (score, _) = self.pvs_search(
+                    &null_move_pos,
+                    depth.saturating_sub(NMP_DEPTH_REDUCTION),
+                    ply + 1,
+                    -beta,
+                    -beta + 1,
+                    config,
+                );
                 let score = -score;
                 if score >= beta {
                     return (beta, MoveTreeNode { move_san: "null".to_string(), score: beta, children: vec![] });
@@ -228,7 +278,15 @@ impl PvsSearcher {
         self.pvs_search(pos, depth, ply, alpha, beta, config)
     }
 
-    fn pvs_search(&mut self, pos: &Chess, depth: u8, ply: u8, mut alpha: i32, beta: i32, config: &SearchConfig) -> (i32, MoveTreeNode) {
+    fn pvs_search(
+        &mut self,
+        pos: &Chess,
+        depth: u8,
+        ply: u8,
+        mut alpha: i32,
+        beta: i32,
+        config: &SearchConfig,
+    ) -> (i32, MoveTreeNode) {
         const LMR_MIN_DEPTH: u8 = 3;
         const LMR_MIN_MOVE_INDEX: usize = 2;
         const FUTILITY_MARGIN_PER_DEPTH: [i32; 4] = [0, 100, 250, 500];
@@ -272,23 +330,38 @@ impl PvsSearcher {
             new_pos.play_unchecked(m);
 
             let (score, child_node) = if i == 0 {
-                let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                let (s, cn) =
+                    self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
                 (-s, cn)
             } else {
                 let mut reduction = 0;
-                if config.use_lmr && depth >= LMR_MIN_DEPTH && i >= LMR_MIN_MOVE_INDEX && !pos.is_check() && !m.is_capture() {
+                if config.use_lmr
+                    && depth >= LMR_MIN_DEPTH
+                    && i >= LMR_MIN_MOVE_INDEX
+                    && !pos.is_check()
+                    && !m.is_capture()
+                {
                     reduction = (1.0 + (depth as f32).ln() * (i as f32).ln() / 2.0).floor() as u8;
                     reduction = reduction.min(depth - 1);
                 }
 
-                let (zw_score, child_node) = self.alpha_beta(&mut new_pos, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, config);
+                let (zw_score, child_node) = self.alpha_beta(
+                    &mut new_pos,
+                    depth - 1 - reduction,
+                    ply + 1,
+                    -alpha - 1,
+                    -alpha,
+                    config,
+                );
                 let zw_score = -zw_score;
 
                 if zw_score > alpha && reduction > 0 {
-                    let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -alpha - 1, -alpha, config);
+                    let (s, cn) =
+                        self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -alpha - 1, -alpha, config);
                     (-s, cn)
                 } else if zw_score > alpha && zw_score < beta {
-                    let (s, cn) = self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                    let (s, cn) =
+                        self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
                     (-s, cn)
                 } else {
                     (zw_score, child_node)
@@ -296,11 +369,13 @@ impl PvsSearcher {
             };
 
             let san = SanPlus::from_move(pos.clone(), m);
-            current_node.children.push(MoveTreeNode {
+            let new_node = MoveTreeNode {
                 move_san: san.to_string(),
                 score,
                 children: child_node.children,
-            });
+            };
+
+            current_node.children.push(new_node);
 
             if score >= beta {
                 if config.use_killer_moves && !m.is_capture() {
@@ -361,18 +436,23 @@ impl PvsSearcher {
 }
 
 use mcts::MctsSearcher;
-pub fn search(pos: &Chess, depth: u8, config: &SearchConfig) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+pub fn search(
+    pos: &Chess,
+    depth: u8,
+    config: &SearchConfig,
+    move_tree_sender: Option<Sender<MoveTreeNode>>,
+) -> (Option<Move>, i32, Option<MoveTreeNode>) {
     match config.search_algorithm {
         SearchAlgorithm::Pvs => {
             let mut searcher = PvsSearcher {
                 history_table: [[0; 64]; 12],
                 killer_moves: [[None; 2]; 64],
             };
-            searcher.search(pos, depth, config)
+            searcher.search(pos, depth, config, move_tree_sender)
         }
         SearchAlgorithm::Mcts => {
             let mut searcher = MctsSearcher::new();
-            searcher.search(pos, depth, config)
+            searcher.search(pos, depth, config, move_tree_sender)
         }
     }
 }
