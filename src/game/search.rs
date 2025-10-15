@@ -195,15 +195,10 @@ impl PvsSearcher {
                         }
 
                         let san = SanPlus::from_move(pos.clone(), *m);
-                        tx.send((
-                            (Some(*m), score),
-                            MoveTreeNode {
-                                move_san: san.to_string(),
-                                score,
-                                children: child_node.children,
-                            },
-                        ))
-                        .unwrap();
+                        let mut node = child_node;
+                        node.move_san = san.to_string();
+                        node.score = score;
+                        tx.send(((Some(*m), score), node)).unwrap();
                     }
                 });
             }
@@ -371,12 +366,9 @@ impl PvsSearcher {
             };
 
             let san = SanPlus::from_move(pos.clone(), m);
-            let new_node = MoveTreeNode {
-                move_san: san.to_string(),
-                score,
-                children: child_node.children,
-            };
-
+            let mut new_node = child_node;
+            new_node.move_san = san.to_string();
+            new_node.score = score;
             current_node.children.push(new_node);
 
             if score >= beta {

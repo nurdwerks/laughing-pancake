@@ -18,7 +18,7 @@ fn format_move_tree(node: &MoveTreeNode, depth: usize) -> String {
     s.push_str(&format!("{}{} (Score: {})\n", indent, node.move_san, node.score));
 
     // To prevent the output from becoming too large, limit the depth and number of children shown
-    if depth < 3 {
+    if depth < 5 {
         let mut sorted_children = node.children.clone();
         sorted_children.sort_by_key(|c| -c.score); // Show best moves first
 

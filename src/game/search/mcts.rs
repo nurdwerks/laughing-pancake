@@ -135,25 +135,20 @@ impl MctsSearcher {
             .map(|(m, _)| *m)
     }
 
-    fn build_move_tree(&self, node_index: usize, pos: &Chess) -> MoveTreeNode {
+    fn build_move_tree_recursive(&self, node_index: usize, pos: &Chess, san: String) -> MoveTreeNode {
         let node = &self.tree[node_index];
         let mut children = Vec::new();
 
         for (m, &child_index) in &node.children {
-            let new_pos = pos.clone();
-            if let Ok(after_move_pos) = new_pos.play(*m) {
-                let child_node = self.build_move_tree(child_index, &after_move_pos);
-                children.push(child_node);
-            }
+            let mut new_pos = pos.clone();
+            new_pos.play_unchecked(*m);
+            let child_san = shakmaty::san::SanPlus::from_move(pos.clone(), *m).to_string();
+            let child_node = self.build_move_tree_recursive(child_index, &new_pos, child_san);
+            children.push(child_node);
         }
 
         MoveTreeNode {
-            move_san: if let Some(parent_index) = node.parent {
-                let parent_node = &self.tree[parent_index];
-                parent_node.children.iter().find(|(_, &idx)| idx == node_index).map(|(m, _)| shakmaty::san::SanPlus::from_move(pos.clone(), *m).to_string()).unwrap_or_default()
-            } else {
-                "root".to_string()
-            },
+            move_san: san,
             score: (node.wins / node.visits.max(1) as f64 * 100.0) as i32,
             children,
         }
@@ -188,7 +183,7 @@ impl Searcher for MctsSearcher {
 
             if i % 100 == 0 {
                 if let Some(sender) = &move_tree_sender {
-                    let tree = self.build_move_tree(root_index, pos);
+                    let tree = self.build_move_tree_recursive(root_index, pos, "root".to_string());
                     if sender.send(tree).is_err() {
                         break;
                     }
@@ -196,6 +191,10 @@ impl Searcher for MctsSearcher {
             }
         }
 
-        (self.best_move(), 0, Some(self.build_move_tree(root_index, pos)))
+        (
+            self.best_move(),
+            0,
+            Some(self.build_move_tree_recursive(root_index, pos, "root".to_string())),
+        )
     }
 }
