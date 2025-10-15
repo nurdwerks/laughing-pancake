@@ -19,7 +19,8 @@ pub enum EvolutionUpdate {
     GenerationStarted(u32),
     MatchStarted(String, String), // White player name, Black player name
     MatchCompleted(Match),
-    BoardUpdate(Chess, i32), // Position, evaluation
+    ThinkingUpdate(String, i32),  // Thinking message, evaluation
+    MovePlayed(String, i32, Chess),      // SAN of the move, material difference, new board position
     StatusUpdate(String),
 }
 
@@ -247,13 +248,19 @@ impl EvolutionManager {
                 black_config
             };
 
+            // Send a "thinking" update
             let (best_move, eval) = search::search(&pos, FIXED_SEARCH_DEPTH, config);
-
-            // Send board update before making the move
-            self.update_sender.send(EvolutionUpdate::BoardUpdate(pos.clone(), eval)).map_err(|_| ())?;
+            let thinking_msg = format!("AI is thinking for {:?}...", pos.turn());
+            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, eval)).map_err(|_| ())?;
 
             if let Some(m) = best_move {
-                sans.push(SanPlus::from_move_and_play_unchecked(&mut pos, m));
+                let san = SanPlus::from_move(pos.clone(), m);
+                let san_string = san.to_string();
+                pos.play_unchecked(m);
+                sans.push(san);
+
+                let material_diff = calculate_material_difference(&pos);
+                self.update_sender.send(EvolutionUpdate::MovePlayed(san_string, material_diff, pos.clone())).map_err(|_| ())?;
             } else {
                 // No legal moves, but not game over? Should be stalemate.
                 break;
@@ -277,6 +284,31 @@ impl EvolutionManager {
 
         Ok((result, pgn))
     }
+}
+
+fn calculate_material_difference(pos: &Chess) -> i32 {
+    let board = pos.board();
+    let mut white_material = 0;
+    let mut black_material = 0;
+
+    for square in shakmaty::Square::ALL {
+        if let Some(piece) = board.piece_at(square) {
+            let value = match piece.role {
+                shakmaty::Role::Pawn => 100,
+                shakmaty::Role::Knight => 300,
+                shakmaty::Role::Bishop => 320,
+                shakmaty::Role::Rook => 500,
+                shakmaty::Role::Queen => 900,
+                shakmaty::Role::King => 0,
+            };
+            if piece.color.is_white() {
+                white_material += value;
+            } else {
+                black_material += value;
+            }
+        }
+    }
+    white_material - black_material
 }
 
 /// Represents a single AI candidate in the population.

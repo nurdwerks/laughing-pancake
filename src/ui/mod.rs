@@ -81,6 +81,10 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
             Span::raw(format!("{}", app.evolution_current_match_eval)),
         ]),
         Line::from(vec![
+            Span::styled("Material: ", Style::default().bold()),
+            Span::raw(format!("{}", app.evolution_material_advantage)),
+        ]),
+        Line::from(vec![
             Span::styled("White: ", Style::default().bold()),
             Span::raw(&app.evolution_white_player),
         ]),
