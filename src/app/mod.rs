@@ -86,7 +86,7 @@ impl App {
             game_result: None,
             tablebase_path,
             opening_book_path,
-            mode: AppMode::Game,
+            mode: AppMode::Evolve,
             profiles,
             selected_profile_index: 0,
             current_search_config: default_config,
@@ -203,6 +203,11 @@ impl App {
                             _ => {}
                         },
                         AppMode::Evolve => match key.code {
+                            KeyCode::Enter => {
+                                if !self.is_evolving {
+                                    self.start_evolution();
+                                }
+                            }
                             KeyCode::Char('e') | KeyCode::Char('q') => {
                                 self.stop_evolution();
                                 self.mode = AppMode::Game;
