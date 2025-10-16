@@ -27,20 +27,79 @@ pub enum EvolutionUpdate {
     StatusUpdate(String),
     Panic(String),
 }
-#[derive(Clone)]
+/// Manages evaluation caches for all players in the tournament.
+/// Caches are created on-demand and automatically destroyed when no longer in use.
 struct CacheManager {
-    caches: HashMap<String, Arc<Mutex<EvaluationCache>>>,
+    caches: Arc<Mutex<HashMap<String, Arc<Mutex<EvaluationCache>>>>>,
+    usage_count: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl CacheManager {
     fn new() -> Self {
-        Self { caches: HashMap::new() }
+        Self {
+            caches: Arc::new(Mutex::new(HashMap::new())),
+            usage_count: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
-    fn get_cache_for_player(&mut self, player_name: &str) -> Arc<Mutex<EvaluationCache>> {
-        self.caches.entry(player_name.to_string())
+    /// Gets a cache for a specific player.
+    /// This will create a cache if one doesn't exist.
+    /// It returns a `CacheGuard`, which will automatically decrement the usage count
+    /// when it goes out of scope.
+    fn get_cache_for_player(&self, player_name: &str) -> CacheGuard {
+        let mut caches = self.caches.lock().unwrap();
+        let mut usage_count = self.usage_count.lock().unwrap();
+
+        let cache = caches
+            .entry(player_name.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(EvaluationCache::new())))
-            .clone()
+            .clone();
+
+        *usage_count.entry(player_name.to_string()).or_insert(0) += 1;
+
+        CacheGuard {
+            player_name: player_name.to_string(),
+            cache: cache.clone(),
+            cache_manager: self.clone(),
+        }
+    }
+
+    /// Called by `CacheGuard` when it's dropped.
+    /// Decrements the usage count for a player's cache and removes it if the count is zero.
+    fn release_cache(&self, player_name: &str) {
+        let mut caches = self.caches.lock().unwrap();
+        let mut usage_count = self.usage_count.lock().unwrap();
+
+        if let Some(count) = usage_count.get_mut(player_name) {
+            *count -= 1;
+            if *count == 0 {
+                usage_count.remove(player_name);
+                caches.remove(player_name);
+            }
+        }
+    }
+}
+
+impl Clone for CacheManager {
+    fn clone(&self) -> Self {
+        Self {
+            caches: self.caches.clone(),
+            usage_count: self.usage_count.clone(),
+        }
+    }
+}
+
+/// A guard that holds a reference to a player's cache.
+/// When this guard is dropped, it notifies the `CacheManager` to decrement the usage count.
+struct CacheGuard {
+    player_name: String,
+    cache: Arc<Mutex<EvaluationCache>>,
+    cache_manager: CacheManager,
+}
+
+impl Drop for CacheGuard {
+    fn drop(&mut self) {
+        self.cache_manager.release_cache(&self.player_name);
     }
 }
 
@@ -108,9 +167,9 @@ impl EvolutionManager {
             self.send_status(format!("Loaded {} individuals.", population.individuals.len()))?;
 
             let mut generation = self.load_or_create_generation(generation_index, &population)?;
-            let mut cache_manager = CacheManager::new();
+            let cache_manager = CacheManager::new();
 
-            self.run_tournament(&mut population, &mut generation, &mut cache_manager)?;
+            self.run_tournament(&mut population, &mut generation, &cache_manager)?;
 
             let next_generation_dir = setup_directories(generation_index + 1);
             self.evolve_population(&population, &next_generation_dir)?;
@@ -205,7 +264,7 @@ impl EvolutionManager {
     }
 
     /// Runs all the games in the tournament, saving progress after each game.
-    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, cache_manager: &mut CacheManager) -> Result<(), ()> {
+    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, cache_manager: &CacheManager) -> Result<(), ()> {
         self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
 
         let matches_to_play: Vec<(usize, Match)> = generation.matches.iter().cloned().enumerate()
@@ -221,13 +280,13 @@ impl EvolutionManager {
         let population_arc = Arc::new(population.clone());
 
         // Spawn a pool of worker threads
-        const NUM_WORKERS: usize = 2;
+        const NUM_WORKERS: usize = 3;
         let mut worker_handles = Vec::new();
         for _ in 0..NUM_WORKERS {
             let jobs_rx_clone = jobs_rx.clone();
             let results_tx_clone = results_tx.clone();
             let population_clone = Arc::clone(&population_arc);
-            let mut cache_manager_clone = cache_manager.clone();
+            let cache_manager_clone = cache_manager.clone();
             let sender_clone = self.update_sender.clone();
             let self_clone = self.clone();
 
@@ -235,15 +294,18 @@ impl EvolutionManager {
                 while let Ok((match_index, game_match)) = jobs_rx_clone.recv() {
                     let white_player_name = game_match.white_player_name.clone();
                     let black_player_name = game_match.black_player_name.clone();
-                    let white_cache = cache_manager_clone.get_cache_for_player(&white_player_name);
-                    let black_cache = cache_manager_clone.get_cache_for_player(&black_player_name);
+
+                    // The guards will be dropped at the end of the loop, releasing the caches.
+                    let white_cache_guard = cache_manager_clone.get_cache_for_player(&white_player_name);
+                    let black_cache_guard = cache_manager_clone.get_cache_for_player(&black_player_name);
+
                     let white_id = parse_id_from_name(&white_player_name);
                     let black_id = parse_id_from_name(&black_player_name);
                     let white_config = &population_clone.individuals[white_id].config;
                     let black_config = &population_clone.individuals[black_id].config;
 
                     let _ = sender_clone.send(EvolutionUpdate::MatchStarted(match_index, white_player_name, black_player_name));
-                    if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, white_cache, black_cache) {
+                    if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
                         if results_tx_clone.send((match_index, result, san)).is_err() {
                             // Main thread has likely shut down, so we can exit.
                             break;
@@ -318,20 +380,20 @@ impl EvolutionManager {
         match_id: usize,
         white_config: &SearchConfig,
         black_config: &SearchConfig,
-        white_cache: Arc<Mutex<EvaluationCache>>,
-        black_cache: Arc<Mutex<EvaluationCache>>,
+        white_cache_guard: &CacheGuard,
+        black_cache_guard: &CacheGuard,
     ) -> Result<(GameResult, String), ()> {
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
         let mut white_searcher: Box<dyn Searcher> = if white_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::with_shared_cache(white_cache))
+            Box::new(PvsSearcher::with_shared_cache(white_cache_guard.cache.clone()))
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
 
         let mut black_searcher: Box<dyn Searcher> = if black_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::with_shared_cache(black_cache))
+            Box::new(PvsSearcher::with_shared_cache(black_cache_guard.cache.clone()))
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
