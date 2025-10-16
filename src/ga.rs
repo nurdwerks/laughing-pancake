@@ -20,10 +20,10 @@ const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 pub enum EvolutionUpdate {
     TournamentStart(usize, usize), // Total matches, skipped matches
     GenerationStarted(u32),
-    MatchStarted(String, String), // White player name, Black player name
-    MatchCompleted(Match),
-    ThinkingUpdate(String, i32),  // Thinking message, evaluation
-    MovePlayed(String, i32, Chess),      // SAN of the move, material difference, new board position
+    MatchStarted(usize, String, String), // Match index, White player name, Black player name
+    MatchCompleted(usize, Match), // Match index, Match
+    ThinkingUpdate(usize, String, i32),  // Match index, Thinking message, evaluation
+    MovePlayed(usize, String, i32, Chess), // Match index, SAN of the move, material difference, new board position
     StatusUpdate(String),
     Panic(String),
 }
@@ -216,15 +216,11 @@ impl EvolutionManager {
         self.update_sender.send(EvolutionUpdate::TournamentStart(total_matches, skipped_matches)).map_err(|_| ())?;
 
         let (results_tx, results_rx) = unbounded();
-        let num_threads = num_cpus::get().max(1); // Ensure at least one thread
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
         let population_arc = Arc::new(population.clone());
 
-        crossbeam_utils::thread::scope(|s| {
-            let matches_to_play_arc = Arc::new(matches_to_play);
-            for i in 0..matches_to_play_arc.len() {
-                let game_match = matches_to_play_arc[i].1.clone();
-                let match_index = matches_to_play_arc[i].0;
-
+        pool.scope(|s| {
+            for (match_index, game_match) in matches_to_play {
                 let white_player_name = game_match.white_player_name.clone();
                 let black_player_name = game_match.black_player_name.clone();
                 let population_clone = Arc::clone(&population_arc);
@@ -232,7 +228,6 @@ impl EvolutionManager {
                 let black_cache = cache_manager.get_cache_for_player(&black_player_name);
                 let sender_clone = self.update_sender.clone();
                 let results_tx_clone = results_tx.clone();
-                let workers_clone = self.workers.clone();
                 let self_clone = self.clone();
 
                 s.spawn(move |_| {
@@ -241,45 +236,45 @@ impl EvolutionManager {
                     let white_config = &population_clone.individuals[white_id].config;
                     let black_config = &population_clone.individuals[black_id].config;
 
-                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(white_player_name.clone(), black_player_name.clone()));
-                    let (result, san) = self_clone.play_game(white_config, black_config, white_cache, black_cache).unwrap();
+                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(match_index, white_player_name.clone(), black_player_name.clone()));
+                    let (result, san) = self_clone.play_game(match_index, white_config, black_config, white_cache, black_cache).unwrap();
 
                     results_tx_clone.send((match_index, result, san)).unwrap();
                 });
             }
+        });
 
-            // Drop the original sender so the receiver knows when all threads are done.
-            drop(results_tx);
+        // Drop the original sender so the receiver knows when all threads are done.
+        drop(results_tx);
 
-            let results: Vec<_> = results_rx.iter().collect();
-            for (match_index, result, san) in results {
-                let mut current_match = generation.matches[match_index].clone();
-                current_match.san = san;
-                current_match.status = "completed".to_string();
+        // Process results as they come in
+        for (match_index, result, san) in results_rx.iter() {
+            let mut current_match = generation.matches[match_index].clone();
+            current_match.san = san;
+            current_match.status = "completed".to_string();
 
-                let white_id = parse_id_from_name(&current_match.white_player_name);
-                let black_id = parse_id_from_name(&current_match.black_player_name);
+            let white_id = parse_id_from_name(&current_match.white_player_name);
+            let black_id = parse_id_from_name(&current_match.black_player_name);
 
-                match result {
-                    GameResult::WhiteWin => {
-                        population.individuals[white_id].score += 1;
-                        population.individuals[black_id].score -= 1;
-                        current_match.result = "1-0".to_string();
-                    }
-                    GameResult::BlackWin => {
-                        population.individuals[white_id].score -= 1;
-                        population.individuals[black_id].score += 1;
-                        current_match.result = "0-1".to_string();
-                    }
-                    GameResult::Draw => {
-                        current_match.result = "1/2-1/2".to_string();
-                    }
+            match result {
+                GameResult::WhiteWin => {
+                    population.individuals[white_id].score += 1;
+                    population.individuals[black_id].score -= 1;
+                    current_match.result = "1-0".to_string();
                 }
-                generation.matches[match_index] = current_match.clone();
-                save_generation(generation);
-                self.update_sender.send(EvolutionUpdate::MatchCompleted(current_match)).map_err(|_| ()).unwrap();
+                GameResult::BlackWin => {
+                    population.individuals[white_id].score -= 1;
+                    population.individuals[black_id].score += 1;
+                    current_match.result = "0-1".to_string();
+                }
+                GameResult::Draw => {
+                    current_match.result = "1/2-1/2".to_string();
+                }
             }
-        }).unwrap();
+            generation.matches[match_index] = current_match.clone();
+            save_generation(generation);
+            self.update_sender.send(EvolutionUpdate::MatchCompleted(match_index, current_match)).map_err(|_| ()).unwrap();
+        }
 
         // Print final tournament results
         self.send_status("\nTournament Results:".to_string())?;
@@ -295,6 +290,7 @@ impl EvolutionManager {
     /// Simulates a single game between two AI configurations.
     fn play_game(
         &self,
+        match_id: usize,
         white_config: &SearchConfig,
         black_config: &SearchConfig,
         white_cache: Arc<Mutex<EvaluationCache>>,
@@ -333,7 +329,7 @@ impl EvolutionManager {
             let (search_result_tx, search_result_rx) = crossbeam_channel::unbounded();
 
             let thinking_msg = format!("AI is thinking for {:?}...", current_pos.turn());
-            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, 0)).map_err(|_| ())?;
+            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(match_id, thinking_msg, 0)).map_err(|_| ())?;
 
             let workers = self.workers.clone();
             let update_sender = self.update_sender.clone();
@@ -346,7 +342,7 @@ impl EvolutionManager {
                 crossbeam_channel::select! {
                     recv(search_result_rx) -> msg => {
                         if let Ok((best_move, eval, _final_tree)) = msg {
-                            let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
+                            let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(match_id, format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
                             if let Some(m) = best_move {
                                 let san = SanPlus::from_move(pos.clone(), m);
                                 sans.push(san);
@@ -354,7 +350,7 @@ impl EvolutionManager {
 
                                 let material_diff = calculate_material_difference(&pos);
                                 let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
-                                if self.update_sender.send(EvolutionUpdate::MovePlayed(last_san, material_diff, pos.clone())).is_err() {
+                                if self.update_sender.send(EvolutionUpdate::MovePlayed(match_id, last_san, material_diff, pos.clone())).is_err() {
                                     // The error will be handled by the outer loop's break condition.
                                 }
                             }

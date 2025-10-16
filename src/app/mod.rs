@@ -4,6 +4,7 @@ use crate::{ga::{self, EvolutionUpdate}};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::sync::{Mutex, Arc};
 use ratatui::{prelude::*, Terminal, widgets::ListState};
 use shakmaty::{Chess};
@@ -46,6 +47,16 @@ pub struct Worker {
     pub start_time: Instant,
 }
 
+#[derive(Clone, Default)]
+pub struct ActiveMatch {
+    pub board: Option<Chess>,
+    pub white_player: String,
+    pub black_player: String,
+    pub san: String,
+    pub eval: i32,
+    pub material: i32,
+}
+
 pub struct App {
     should_quit: bool,
     pub error_message: Option<String>,
@@ -62,13 +73,8 @@ pub struct App {
     pub evolution_current_generation: u32,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
-    pub evolution_current_match_board: Option<Chess>,
-    pub evolution_current_match_eval: i32,
-    pub evolution_current_match_san: String,
-    pub evolution_material_advantage: i32,
+    pub active_matches: HashMap<usize, ActiveMatch>,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
-    pub evolution_white_player: String,
-    pub evolution_black_player: String,
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
     log_receiver: Receiver<String>,
 }
@@ -95,13 +101,8 @@ impl App {
             evolution_current_generation: 0,
             evolution_matches_completed: 0,
             evolution_total_matches: 0,
-            evolution_current_match_board: None,
-            evolution_current_match_eval: 0,
-            evolution_current_match_san: "".to_string(),
-            evolution_material_advantage: 0,
+            active_matches: HashMap::new(),
             evolution_thread_handle: None,
-            evolution_white_player: "".to_string(),
-            evolution_black_player: "".to_string(),
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
             log_receiver,
         }
@@ -185,13 +186,17 @@ impl App {
                     self.evolution_current_generation = gen_index;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 0;
+                    self.active_matches.clear();
                 }
-                EvolutionUpdate::MatchStarted(white_player, black_player) => {
-                    self.evolution_white_player = white_player;
-                    self.evolution_black_player = black_player;
+                EvolutionUpdate::MatchStarted(match_id, white_player, black_player) => {
+                    let mut match_state = ActiveMatch::default();
+                    match_state.white_player = white_player;
+                    match_state.black_player = black_player;
+                    self.active_matches.insert(match_id, match_state);
                 }
-                EvolutionUpdate::MatchCompleted(game_match) => {
+                EvolutionUpdate::MatchCompleted(match_id, game_match) => {
                     self.evolution_matches_completed += 1;
+                    self.active_matches.remove(&match_id);
 
                     let result_str = match game_match.result.as_str() {
                         "1-0" => format!("White wins ({})", game_match.white_player_name),
@@ -199,20 +204,21 @@ impl App {
                         "1/2-1/2" => "Draw".to_string(),
                         _ => "Unknown result".to_string(),
                     };
-                    let log_message = format!("Match complete: {}.", result_str);
+                    let log_message = format!("[Match {}] Complete: {}.", match_id, result_str);
                     self.evolution_log.push(log_message);
                     self.autoscroll_log();
-
-                    self.evolution_current_match_san.clear();
-                    self.evolution_material_advantage = 0;
                 }
-                EvolutionUpdate::ThinkingUpdate(_pv, eval) => {
-                    self.evolution_current_match_eval = eval;
+                EvolutionUpdate::ThinkingUpdate(match_id, _pv, eval) => {
+                    if let Some(match_state) = self.active_matches.get_mut(&match_id) {
+                        match_state.eval = eval;
+                    }
                 }
-                EvolutionUpdate::MovePlayed(san, material, board) => {
-                    self.evolution_current_match_san.push_str(&format!("{san} "));
-                    self.evolution_material_advantage = material;
-                    self.evolution_current_match_board = Some(board);
+                EvolutionUpdate::MovePlayed(match_id, san, material, board) => {
+                    if let Some(match_state) = self.active_matches.get_mut(&match_id) {
+                        match_state.san.push_str(&format!("{san} "));
+                        match_state.material = material;
+                        match_state.board = Some(board);
+                    }
                 }
                 EvolutionUpdate::StatusUpdate(message) => {
                     self.evolution_log.push(message);
