@@ -6,7 +6,6 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, List, ListItem},
 };
 use shakmaty::{File, Piece, Position, Rank, Role, Square};
-use std::str::FromStr;
 
 use crate::app::App;
 use ratatui::widgets::{Gauge, Wrap};
@@ -21,12 +20,82 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Top status bar
-            Constraint::Min(0),    // Main content
+            Constraint::Min(0),    // Main content area for matches
+            Constraint::Length(3), // Worker List
             Constraint::Percentage(25), // Log
         ])
         .split(frame.size());
 
     // --- Top Status Bar ---
+    draw_status_bar(frame, app, main_layout[0]);
+
+    // --- Main Content Area (Matches) ---
+    let num_matches = app.active_matches.len().max(1); // Avoid division by zero
+    let match_constraints = vec![Constraint::Percentage(100 / num_matches as u16); num_matches];
+    let content_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(match_constraints)
+        .split(main_layout[1]);
+
+    // Sort matches by ID to ensure a consistent display order
+    let mut sorted_matches: Vec<_> = app.active_matches.iter().collect();
+    sorted_matches.sort_by_key(|(id, _)| *id);
+
+
+    for (i, (match_id, match_state)) in sorted_matches.iter().enumerate() {
+        let match_pane = content_layout[i];
+        let match_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(70), // Board
+                Constraint::Percentage(30), // SAN
+            ])
+            .split(match_pane);
+
+        // Draw Board
+        let board_title = format!(
+            "Match {} | W: {} vs B: {}",
+            match_id,
+            match_state.white_player.split('.').next().unwrap_or(""),
+            match_state.black_player.split('.').next().unwrap_or("")
+        );
+
+        if let Some(board) = &match_state.board {
+            draw_board(frame, match_layout[0], board, &board_title);
+        } else {
+            let board_block = Block::default().borders(Borders::ALL).title(board_title);
+            frame.render_widget(board_block, match_layout[0]);
+        }
+
+        // Draw SAN Movelist
+        let san_widget = Paragraph::new(match_state.san.as_str())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("SAN | Eval: {} | Material: {}", match_state.eval, match_state.material))
+            )
+            .wrap(Wrap { trim: true });
+        frame.render_widget(san_widget, match_layout[1]);
+    }
+
+
+    // --- Worker List ---
+    draw_worker_list(frame, app, main_layout[2]);
+
+
+    // --- Log View ---
+    let log_items: Vec<ListItem> = app
+        .evolution_log
+        .iter()
+        .map(|msg| ListItem::new(msg.as_str()))
+        .collect();
+    let log_list = List::new(log_items)
+        .block(Block::default().borders(Borders::ALL).title("Log"))
+        .direction(ratatui::widgets::ListDirection::BottomToTop);
+    frame.render_stateful_widget(log_list, main_layout[3], &mut app.evolution_log_state);
+}
+
+fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let top_bar_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -34,7 +103,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
             Constraint::Percentage(33), // CPU Usage
             Constraint::Percentage(33), // Memory Usage
         ])
-        .split(main_layout[0]);
+        .split(area);
 
     // Generation Progress
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
@@ -66,51 +135,13 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .label(format!("{mem_usage_gb:.2}/{mem_total_gb:.2} GB"))
         .percent(mem_percentage as u16);
     frame.render_widget(mem_gauge, top_bar_layout[2]);
+}
 
-    // --- Main Content Area ---
-    let content_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(60), // Top row: Board and Worker List
-            Constraint::Percentage(40), // Bottom row: Match Info and SAN
-        ])
-        .split(main_layout[1]);
-
-    let top_row_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50), // Board
-            Constraint::Percentage(50), // Worker List
-        ])
-        .split(content_layout[0]);
-
-    let bottom_row_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50), // Match Info
-            Constraint::Percentage(50), // SAN Movelist
-        ])
-        .split(content_layout[1]);
-
-    // Draw Board
-    let board_title = if !app.evolution_white_player.is_empty() {
-        format!("White: {} vs Black: {}", app.evolution_white_player, app.evolution_black_player)
-    } else {
-        "Current Match".to_string()
-    };
-    let board_block = Block::default().borders(Borders::ALL).title(board_title);
-    if let Some(board) = &app.evolution_current_match_board {
-        draw_board(frame, top_row_layout[0], board, "");
-    } else {
-        frame.render_widget(board_block, top_row_layout[0]);
-    }
-
-    // Draw Worker List
+fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
     let workers_block = Block::default().borders(Borders::ALL).title("Running Threads");
-    let mut worker_items: Vec<ListItem> = {
+    let worker_items: Vec<ListItem> = {
         let workers = app.evolution_workers.lock().unwrap();
         let mut worker_vec: Vec<_> = workers.iter().collect();
-        // Sort by longest running first
         worker_vec.sort_by_key(|w| w.start_time);
         worker_vec.reverse();
         worker_vec.iter().map(|w| {
@@ -118,48 +149,18 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
             ListItem::new(format!("{:.2?}: {}", elapsed, w.name))
         }).collect()
     };
-    if worker_items.is_empty() {
-        worker_items.push(ListItem::new("Waiting for AI move..."));
-    }
-    let workers_list = List::new(worker_items).block(workers_block);
-    frame.render_widget(workers_list, top_row_layout[1]);
 
-
-    // --- Match Info Panes (removed for a cleaner look) ---
-    let match_info_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Match Information");
-    frame.render_widget(match_info_block, bottom_row_layout[0]);
-
-    // Draw SAN Movelist
-    let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!("SAN | Eval: {} | Material: {}", app.evolution_current_match_eval, app.evolution_material_advantage))
-        )
-        .wrap(Wrap { trim: true });
-    frame.render_widget(san_widget, bottom_row_layout[1]);
-
-
-    // --- Log View ---
-    let log_items: Vec<ListItem> = app
-        .evolution_log
-        .iter()
-        .map(|msg| ListItem::new(msg.as_str()))
-        .collect();
-    let log_list = List::new(log_items)
-        .block(Block::default().borders(Borders::ALL).title("Log"))
-        .direction(ratatui::widgets::ListDirection::BottomToTop);
-    frame.render_stateful_widget(log_list, main_layout[2], &mut app.evolution_log_state);
+    let list = if worker_items.is_empty() {
+        List::new([ListItem::new("Waiting for AI move...")])
+    } else {
+        List::new(worker_items)
+    };
+    frame.render_widget(list.block(workers_block), area);
 }
 
-fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input: &str) {
+fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, title: &str) {
     let board = chess.board();
     let mut board_text = Text::default();
-
-    let from_square = user_input.get(0..2).and_then(|s| Square::from_str(s).ok());
-    let to_square = user_input.get(2..4).and_then(|s| Square::from_str(s).ok());
 
     for rank_idx in (0..8).rev() {
         let mut line = Line::default();
@@ -172,11 +173,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
             let piece = board.piece_at(square);
             let symbol = get_piece_symbol(piece);
 
-            let is_selected = from_square == Some(square) || to_square == Some(square);
-
-            let bg_color = if is_selected {
-                Color::Yellow
-            } else if (file_idx + rank_idx) % 2 == 0 {
+            let bg_color = if (file_idx + rank_idx) % 2 == 0 {
                 Color::Rgb(181, 136, 99) // Dark square
             } else {
                 Color::Rgb(240, 217, 181) // Light square
@@ -211,7 +208,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
     board_text.lines.push(file_labels);
 
     let board_widget =
-        Paragraph::new(board_text).block(Block::default().title("Chess Board").borders(Borders::ALL));
+        Paragraph::new(board_text).block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(board_widget, area);
 }
 

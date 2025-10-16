@@ -11,7 +11,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
-use std::{error::Error, io};
+use std::{error::Error, io, panic};
 use tracing_subscriber::{fmt, prelude::*};
 
 
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with(fmt::layer().with_writer(TuiMakeWriter::new).with_filter(tracing_subscriber::filter::LevelFilter::INFO))
         .init();
 
-    std::panic::set_hook(Box::new(|info| {
+    panic::set_hook(Box::new(|info| {
         let payload = info.payload().downcast_ref::<&str>().unwrap_or(&"");
         let location = info.location().unwrap();
         let msg = format!("panic occurred: {payload}, location: {location}");
