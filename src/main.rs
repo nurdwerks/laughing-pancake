@@ -3,6 +3,15 @@ mod ui;
 mod game;
 mod ga;
 
+use crate::app::{App, TuiMakeWriter};
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{prelude::CrosstermBackend, Terminal};
+use std::{error::Error, io};
+use tracing_subscriber::{fmt, prelude::*};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
