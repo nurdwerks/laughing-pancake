@@ -177,10 +177,14 @@ impl App {
     fn handle_evolution_updates(&mut self) {
         while let Ok(update) = self.evolution_receiver.try_recv() {
             match update {
+                EvolutionUpdate::TournamentStart(total_matches, skipped_matches) => {
+                    self.evolution_total_matches = total_matches;
+                    self.evolution_matches_completed = skipped_matches;
+                }
                 EvolutionUpdate::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
                     self.evolution_matches_completed = 0;
-                    self.evolution_total_matches = 9900; // POPULATION_SIZE * (POPULATION_SIZE - 1)
+                    self.evolution_total_matches = 0;
                 }
                 EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;

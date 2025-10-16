@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Sender, unbounded};
 
 const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
@@ -17,6 +18,7 @@ const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
 #[derive(Debug, Clone)]
 pub enum EvolutionUpdate {
+    TournamentStart(usize, usize), // Total matches, skipped matches
     GenerationStarted(u32),
     MatchStarted(String, String), // White player name, Black player name
     MatchCompleted(Match),
@@ -25,8 +27,25 @@ pub enum EvolutionUpdate {
     StatusUpdate(String),
     Panic(String),
 }
+struct CacheManager {
+    caches: HashMap<String, Arc<Mutex<EvaluationCache>>>,
+}
+
+impl CacheManager {
+    fn new() -> Self {
+        Self { caches: HashMap::new() }
+    }
+
+    fn get_cache_for_player(&mut self, player_name: &str) -> Arc<Mutex<EvaluationCache>> {
+        self.caches.entry(player_name.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(EvaluationCache::new())))
+            .clone()
+    }
+}
+
 
 /// Manages the evolution process in a background thread.
+#[derive(Clone)]
 pub struct EvolutionManager {
     update_sender: Sender<EvolutionUpdate>,
     workers: Arc<Mutex<Vec<Worker>>>,
@@ -88,8 +107,9 @@ impl EvolutionManager {
             self.send_status(format!("Loaded {} individuals.", population.individuals.len()))?;
 
             let mut generation = self.load_or_create_generation(generation_index, &population)?;
+            let mut cache_manager = CacheManager::new();
 
-            self.run_tournament(&mut population, &mut generation, &generation_dir)?;
+            self.run_tournament(&mut population, &mut generation, &mut cache_manager)?;
 
             let next_generation_dir = setup_directories(generation_index + 1);
             self.evolve_population(&population, &next_generation_dir)?;
@@ -184,64 +204,82 @@ impl EvolutionManager {
     }
 
     /// Runs all the games in the tournament, saving progress after each game.
-    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, _generation_dir: &Path) -> Result<(), ()> {
+    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, cache_manager: &mut CacheManager) -> Result<(), ()> {
         self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
+
+        let matches_to_play: Vec<(usize, Match)> = generation.matches.iter().cloned().enumerate()
+            .filter(|(_, m)| m.status != "completed")
+            .collect();
         let total_matches = generation.matches.len();
-        for i in 0..total_matches {
-            if generation.matches[i].status == "completed" {
-                self.send_status(format!("Skipping already completed game {}/{}.", i + 1, total_matches))?;
-                continue;
+        let skipped_matches = total_matches - matches_to_play.len();
+        self.send_status(format!("Skipping {} already completed games.", skipped_matches))?;
+        self.update_sender.send(EvolutionUpdate::TournamentStart(total_matches, skipped_matches)).map_err(|_| ())?;
+
+        let (results_tx, results_rx) = unbounded();
+        let num_threads = num_cpus::get().max(1); // Ensure at least one thread
+        let population_arc = Arc::new(population.clone());
+
+        crossbeam_utils::thread::scope(|s| {
+            let matches_to_play_arc = Arc::new(matches_to_play);
+            for i in 0..matches_to_play_arc.len() {
+                let game_match = matches_to_play_arc[i].1.clone();
+                let match_index = matches_to_play_arc[i].0;
+
+                let white_player_name = game_match.white_player_name.clone();
+                let black_player_name = game_match.black_player_name.clone();
+                let population_clone = Arc::clone(&population_arc);
+                let white_cache = cache_manager.get_cache_for_player(&white_player_name);
+                let black_cache = cache_manager.get_cache_for_player(&black_player_name);
+                let sender_clone = self.update_sender.clone();
+                let results_tx_clone = results_tx.clone();
+                let workers_clone = self.workers.clone();
+                let self_clone = self.clone();
+
+                s.spawn(move |_| {
+                    let white_id = parse_id_from_name(&white_player_name);
+                    let black_id = parse_id_from_name(&black_player_name);
+                    let white_config = &population_clone.individuals[white_id].config;
+                    let black_config = &population_clone.individuals[black_id].config;
+
+                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(white_player_name.clone(), black_player_name.clone()));
+                    let (result, san) = self_clone.play_game(white_config, black_config, white_cache, black_cache).unwrap();
+
+                    results_tx_clone.send((match_index, result, san)).unwrap();
+                });
             }
 
-            let white_player_name = generation.matches[i].white_player_name.clone();
-            let black_player_name = generation.matches[i].black_player_name.clone();
+            // Drop the original sender so the receiver knows when all threads are done.
+            drop(results_tx);
 
-            self.update_sender.send(EvolutionUpdate::MatchStarted(white_player_name.clone(), black_player_name.clone())).map_err(|_| ())?;
+            let results: Vec<_> = results_rx.iter().collect();
+            for (match_index, result, san) in results {
+                let mut current_match = generation.matches[match_index].clone();
+                current_match.san = san;
+                current_match.status = "completed".to_string();
 
-            self.send_status(format!("Playing game {}/{} (White: {}, Black: {})...",
-                i + 1,
-                total_matches,
-                white_player_name,
-                black_player_name
-            ))?;
+                let white_id = parse_id_from_name(&current_match.white_player_name);
+                let black_id = parse_id_from_name(&current_match.black_player_name);
 
-            let white_id = parse_id_from_name(&white_player_name);
-            let black_id = parse_id_from_name(&black_player_name);
-
-            let white_config = &population.individuals[white_id].config;
-            let black_config = &population.individuals[black_id].config;
-
-            let (result, san) = self.play_game(white_config, black_config)?;
-
-            // Re-borrow mutably for the update
-            let current_match = &mut generation.matches[i];
-            current_match.san = san;
-            current_match.status = "completed".to_string();
-
-            match result {
-                GameResult::WhiteWin => {
-                    population.individuals[white_id].score += 1;
-                    population.individuals[black_id].score -= 1;
-                    current_match.result = "1-0".to_string();
+                match result {
+                    GameResult::WhiteWin => {
+                        population.individuals[white_id].score += 1;
+                        population.individuals[black_id].score -= 1;
+                        current_match.result = "1-0".to_string();
+                    }
+                    GameResult::BlackWin => {
+                        population.individuals[white_id].score -= 1;
+                        population.individuals[black_id].score += 1;
+                        current_match.result = "0-1".to_string();
+                    }
+                    GameResult::Draw => {
+                        current_match.result = "1/2-1/2".to_string();
+                    }
                 }
-                GameResult::BlackWin => {
-                    population.individuals[white_id].score -= 1;
-                    population.individuals[black_id].score += 1;
-                    current_match.result = "0-1".to_string();
-                }
-                GameResult::Draw => {
-                    // No change in score for a draw
-                    current_match.result = "1/2-1/2".to_string();
-                }
+                generation.matches[match_index] = current_match.clone();
+                save_generation(generation);
+                self.update_sender.send(EvolutionUpdate::MatchCompleted(current_match)).map_err(|_| ()).unwrap();
             }
-
-            // The mutable borrow of `generation.matches[i]` is dropped here.
-            // Now we can save the whole generation.
-            save_generation(generation);
-            self.update_sender.send(EvolutionUpdate::MatchCompleted(generation.matches[i].clone())).map_err(|_| ())?;
-            self.send_status(format!("Finished game {}/{}. Progress saved.", i + 1, total_matches))?;
-            self.send_status("Player cache saved.".to_string())?;
-        }
+        }).unwrap();
 
         // Print final tournament results
         self.send_status("\nTournament Results:".to_string())?;
@@ -255,41 +293,27 @@ impl EvolutionManager {
     }
 
     /// Simulates a single game between two AI configurations.
-    fn play_game(&self, white_config: &SearchConfig, black_config: &SearchConfig) -> Result<(GameResult, String), ()> {
+    fn play_game(
+        &self,
+        white_config: &SearchConfig,
+        black_config: &SearchConfig,
+        white_cache: Arc<Mutex<EvaluationCache>>,
+        black_cache: Arc<Mutex<EvaluationCache>>,
+    ) -> Result<(GameResult, String), ()> {
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
-        let white_searcher_pvs;
-        let black_searcher_pvs;
-
         let mut white_searcher: Box<dyn Searcher> = if white_config.search_algorithm == SearchAlgorithm::Pvs {
-            let cache_path = PathBuf::from(".").join("player_cache.json");
-            let cache = if cache_path.exists() {
-                let json = fs::read_to_string(&cache_path).unwrap_or_default();
-                serde_json::from_str(&json).unwrap_or_else(|_| EvaluationCache::new())
-            } else {
-                EvaluationCache::new()
-            };
-            white_searcher_pvs = PvsSearcher::with_cache(cache);
-            Box::new(white_searcher_pvs.clone())
+            Box::new(PvsSearcher::with_shared_cache(white_cache))
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
 
         let mut black_searcher: Box<dyn Searcher> = if black_config.search_algorithm == SearchAlgorithm::Pvs {
-            let cache_path = PathBuf::from(".").join("player_cache.json");
-            let cache = if cache_path.exists() {
-                let json = fs::read_to_string(&cache_path).unwrap_or_default();
-                serde_json::from_str(&json).unwrap_or_else(|_| EvaluationCache::new())
-            } else {
-                EvaluationCache::new()
-            };
-            black_searcher_pvs = PvsSearcher::with_cache(cache);
-            Box::new(black_searcher_pvs.clone())
+            Box::new(PvsSearcher::with_shared_cache(black_cache))
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
-
 
         let mut game_result_override = None;
         while !pos.is_game_over() {
@@ -359,14 +383,6 @@ impl EvolutionManager {
             pgn.push_str(&format!("{san} "));
         }
 
-        if let Some(pvs_searcher) = white_searcher.as_any().downcast_ref::<PvsSearcher>() {
-            let cache = pvs_searcher.get_cache();
-            let cache_lock = cache.lock().unwrap();
-            let cache_path = PathBuf::from(".").join("player_cache.json");
-            let json = serde_json::to_string_pretty(cache_lock.get_table()).expect("Failed to serialize cache");
-            fs::write(cache_path, json).expect("Failed to write cache file");
-        }
-
         Ok((result, pgn))
     }
 }
@@ -397,6 +413,7 @@ fn calculate_material_difference(pos: &Chess) -> i32 {
 }
 
 /// Represents a single AI candidate in the population.
+#[derive(Clone)]
 pub struct Individual {
     pub id: usize,
     pub config: SearchConfig,
@@ -404,6 +421,7 @@ pub struct Individual {
 }
 
 /// Represents a collection of individuals for a single generation.
+#[derive(Clone)]
 pub struct Population {
     pub individuals: Vec<Individual>,
 }
