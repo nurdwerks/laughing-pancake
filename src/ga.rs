@@ -67,7 +67,7 @@ impl EvolutionManager {
         self.send_status("Starting evolution process".to_string())?;
         let mut generation_index = find_latest_complete_generation().unwrap_or(0);
         if generation_index > 0 {
-             self.send_status(format!("Resuming from last completed generation: {}.", generation_index))?;
+             self.send_status(format!("Resuming from last completed generation: {generation_index}."))?;
         }
 
         // Special handling for first ever run.
@@ -79,11 +79,11 @@ impl EvolutionManager {
 
 
         loop {
-            self.send_status(format!("--- Starting Generation {} ---", generation_index))?;
+            self.send_status(format!("--- Starting Generation {generation_index} ---"))?;
             self.update_sender.send(EvolutionUpdate::GenerationStarted(generation_index)).map_err(|_| ())?;
             let generation_dir = setup_directories(generation_index);
 
-            self.send_status(format!("Loading population for generation {}...", generation_index))?;
+            self.send_status(format!("Loading population for generation {generation_index}..."))?;
             let mut population = Population::load(&generation_dir);
             self.send_status(format!("Loaded {} individuals.", population.individuals.len()))?;
 
@@ -93,7 +93,7 @@ impl EvolutionManager {
 
             let next_generation_dir = setup_directories(generation_index + 1);
             self.evolve_population(&population, &next_generation_dir)?;
-            self.send_status(format!("--- Generation {} Complete ---", generation_index))?;
+            self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
     }
@@ -101,24 +101,24 @@ impl EvolutionManager {
     /// Loads a generation from a file, or creates a new one if it doesn't exist or is corrupt.
     fn load_or_create_generation(&self, generation_index: u32, population: &Population) -> Result<Generation, ()> {
         let file_path = Path::new(EVOLUTION_DIR)
-            .join(format!("generation_{}.json", generation_index));
+            .join(format!("generation_{generation_index}.json"));
 
         if file_path.exists() {
             let json = fs::read_to_string(&file_path);
             if let Ok(json_content) = json {
                 let generation: Result<Generation, _> = serde_json::from_str(&json_content);
                 if let Ok(gen) = generation {
-                    self.send_status(format!("Successfully loaded existing match data for generation {}.", generation_index))?;
+                    self.send_status(format!("Successfully loaded existing match data for generation {generation_index}."))?;
                     return Ok(gen);
                 } else {
-                    self.send_status(format!("Warning: Found corrupt generation file at {:?}. Starting generation from scratch.", file_path))?;
+                    self.send_status(format!("Warning: Found corrupt generation file at {file_path:?}. Starting generation from scratch."))?;
                 }
             } else {
-                 self.send_status(format!("Warning: Could not read generation file at {:?}. Starting generation from scratch.", file_path))?;
+                 self.send_status(format!("Warning: Could not read generation file at {file_path:?}. Starting generation from scratch."))?;
             }
         }
 
-        self.send_status(format!("No existing match data found for generation {}. Creating new tournament.", generation_index))?;
+        self.send_status(format!("No existing match data found for generation {generation_index}. Creating new tournament."))?;
         let games = generate_pairings(population);
         let matches = games.into_iter().map(|game| Match {
             white_player_name: format!("individual_{}.json", game.white_player_id),
@@ -157,9 +157,9 @@ impl EvolutionManager {
         let mut rng = rand::thread_rng();
 
         // 2. Elitism: Copy the top 5 to the next generation
-        for i in 0..5 {
-            let elite_config_path = next_generation_dir.join(format!("individual_{}.json", i));
-            let json = serde_json::to_string_pretty(&elites[i].config).expect("Failed to serialize elite config");
+        for (i, elite) in elites.iter().enumerate().take(5) {
+            let elite_config_path = next_generation_dir.join(format!("individual_{i}.json"));
+            let json = serde_json::to_string_pretty(&elite.config).expect("Failed to serialize elite config");
             fs::write(elite_config_path, json).expect("Failed to write elite config file");
         }
 
@@ -175,11 +175,11 @@ impl EvolutionManager {
             // Mutate the child
             mutate(&mut child_config, &mut rng);
 
-            let child_config_path = next_generation_dir.join(format!("individual_{}.json", i));
+            let child_config_path = next_generation_dir.join(format!("individual_{i}.json"));
             let json = serde_json::to_string_pretty(&child_config).expect("Failed to serialize child config");
             fs::write(child_config_path, json).expect("Failed to write child config file");
         }
-        self.send_status(format!("Generated and saved {} new individuals for the next generation.", POPULATION_SIZE))?;
+        self.send_status(format!("Generated and saved {POPULATION_SIZE} new individuals for the next generation."))?;
         Ok(())
     }
 
@@ -292,24 +292,21 @@ impl EvolutionManager {
                     search_result_tx.send(search_result).unwrap();
                 });
 
-                loop {
-                    crossbeam_channel::select! {
-                        recv(search_result_rx) -> msg => {
-                            if let Ok((best_move, eval, _final_tree)) = msg {
-                                let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
-                                if let Some(m) = best_move {
-                                    let san = SanPlus::from_move(pos.clone(), m);
-                                    sans.push(san);
-                                    pos.play_unchecked(m);
+                crossbeam_channel::select! {
+                    recv(search_result_rx) -> msg => {
+                        if let Ok((best_move, eval, _final_tree)) = msg {
+                            let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
+                            if let Some(m) = best_move {
+                                let san = SanPlus::from_move(pos.clone(), m);
+                                sans.push(san);
+                                pos.play_unchecked(m);
 
-                                    let material_diff = calculate_material_difference(&pos);
-                                    let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
-                                    if self.update_sender.send(EvolutionUpdate::MovePlayed(last_san, material_diff, pos.clone())).is_err() {
-                                        // The error will be handled by the outer loop's break condition.
-                                    }
+                                let material_diff = calculate_material_difference(&pos);
+                                let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
+                                if self.update_sender.send(EvolutionUpdate::MovePlayed(last_san, material_diff, pos.clone())).is_err() {
+                                    // The error will be handled by the outer loop's break condition.
                                 }
                             }
-                            break;
                         }
                     }
                 }
@@ -328,7 +325,7 @@ impl EvolutionManager {
             if i % 2 == 0 {
                 pgn.push_str(&format!("{}. ", i / 2 + 1));
             }
-            pgn.push_str(&format!("{} ", san));
+            pgn.push_str(&format!("{san} "));
         }
 
         Ok((result, pgn))
@@ -379,7 +376,7 @@ impl Population {
     pub fn load(generation_dir: &Path) -> Self {
         let mut individuals = Vec::new();
         for i in 0..POPULATION_SIZE {
-            let file_path = generation_dir.join(format!("individual_{}.json", i));
+            let file_path = generation_dir.join(format!("individual_{i}.json"));
             let json = fs::read_to_string(file_path).expect("Failed to read config file");
             let config: SearchConfig = serde_json::from_str(&json).expect("Failed to deserialize config");
 
@@ -607,7 +604,7 @@ fn setup_directories(generation_index: u32) -> PathBuf {
         fs::create_dir(EVOLUTION_DIR).expect("Failed to create evolution directory");
     }
 
-    let generation_dir = PathBuf::from(EVOLUTION_DIR).join(format!("generation_{}", generation_index));
+    let generation_dir = PathBuf::from(EVOLUTION_DIR).join(format!("generation_{generation_index}"));
     if !generation_dir.exists() {
         fs::create_dir(&generation_dir).expect("Failed to create generation directory");
     }
@@ -662,7 +659,7 @@ fn generate_initial_population(generation_dir: &Path) {
         config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight, &mut rng);
         config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight, &mut rng);
 
-        let file_path = generation_dir.join(format!("individual_{}.json", i));
+        let file_path = generation_dir.join(format!("individual_{i}.json"));
         let json = serde_json::to_string_pretty(&config).expect("Failed to serialize config");
         fs::write(file_path, json).expect("Failed to write config file");
     }

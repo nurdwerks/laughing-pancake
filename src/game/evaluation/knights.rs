@@ -55,15 +55,11 @@ fn evaluate_outpost(board: &Board, color: Color, square: Square) -> i32 {
     let back_rank_idx = if color == Color::White { rank_idx - 1 } else { rank_idx + 1 };
 
     if back_rank_idx < 8 {
-        if file_idx > 0 {
-            if !friendly_pawns.intersect(Bitboard::from(Square::from_coords(File::new(file_idx - 1), Rank::new(back_rank_idx)))).is_empty() {
-                is_supported = true;
-            }
+        if file_idx > 0 && !friendly_pawns.intersect(Bitboard::from(Square::from_coords(File::new(file_idx - 1), Rank::new(back_rank_idx)))).is_empty() {
+            is_supported = true;
         }
-        if file_idx < 7 {
-            if !friendly_pawns.intersect(Bitboard::from(Square::from_coords(File::new(file_idx + 1), Rank::new(back_rank_idx)))).is_empty() {
-                is_supported = true;
-            }
+        if file_idx < 7 && !friendly_pawns.intersect(Bitboard::from(Square::from_coords(File::new(file_idx + 1), Rank::new(back_rank_idx)))).is_empty() {
+            is_supported = true;
         }
     }
 

@@ -138,7 +138,10 @@ impl Searcher for PvsSearcher {
         update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
-            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers, update_sender);
+            let args = PvsRootSearchArgs {
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, workers, update_sender
+            };
+            let (move_opt, score, tree) = self.pvs_root_search(args);
             return (move_opt, score, Some(tree));
         }
 
@@ -147,14 +150,30 @@ impl Searcher for PvsSearcher {
         let alpha = score_guess - ASPIRATION_WINDOW_DELTA;
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
-        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta, workers.clone(), update_sender.clone());
+        let args = PvsRootSearchArgs {
+            pos, depth, config, alpha, beta, workers: workers.clone(), update_sender: update_sender.clone()
+        };
+        let (mut best_move, mut score, mut tree) = self.pvs_root_search(args);
 
         if score <= alpha || score >= beta {
-            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers, update_sender);
+            let args = PvsRootSearchArgs {
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, workers, update_sender
+            };
+            (best_move, score, tree) = self.pvs_root_search(args);
         }
 
         (best_move, score, Some(tree))
     }
+}
+
+struct PvsRootSearchArgs<'a> {
+    pos: &'a Chess,
+    depth: u8,
+    config: &'a SearchConfig,
+    alpha: i32,
+    beta: i32,
+    workers: Option<Arc<Mutex<Vec<Worker>>>>,
+    update_sender: Option<Sender<EvolutionUpdate>>,
 }
 
 impl PvsSearcher {
@@ -168,36 +187,30 @@ impl PvsSearcher {
 
     fn pvs_root_search(
         &mut self,
-        pos: &Chess,
-        depth: u8,
-        config: &SearchConfig,
-        mut alpha: i32,
-        beta: i32,
-        workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<EvolutionUpdate>>,
+        mut args: PvsRootSearchArgs,
     ) -> (Option<Move>, i32, MoveTreeNode) {
-        let mut legal_moves = pos.legal_moves();
+        let mut legal_moves = args.pos.legal_moves();
         let mut root_node = MoveTreeNode {
             move_san: "root".to_string(),
             score: 0,
             children: Vec::new(),
         };
         if legal_moves.is_empty() {
-            return (None, self.evaluate_with_cache(pos, config), root_node);
+            return (None, self.evaluate_with_cache(args.pos, args.config), root_node);
         }
-        self.order_moves(&mut legal_moves, pos, 0, config, None);
+        self.order_moves(&mut legal_moves, args.pos, 0, args.config, None);
 
         let num_threads = num_cpus::get();
         let (tx, rx) = std::sync::mpsc::channel();
 
         thread::scope(|s| {
             for moves_chunk in legal_moves.chunks( (legal_moves.len() / num_threads).max(1) ) {
-                let pos = pos.clone();
-                let config = config.clone();
+                let pos = args.pos.clone();
+                let config = args.config.clone();
                 let mut searcher = self.clone();
                 let tx = tx.clone();
-                let workers = workers.clone();
-                let _update_sender = update_sender.clone();
+                let workers = args.workers.clone();
+                let _update_sender = args.update_sender.clone();
                 let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
 
                 s.spawn(move |_| {
@@ -207,7 +220,7 @@ impl PvsSearcher {
                         .collect::<Vec<_>>()
                         .join(", ");
 
-                    let worker_display_name = format!("PVS: {}", worker_name);
+                    let worker_display_name = format!("PVS: {worker_name}");
 
                     if let Some(w) = &workers {
                         let mut worker_list = w.lock().unwrap();
@@ -224,7 +237,7 @@ impl PvsSearcher {
                         let mut new_pos = pos.clone();
                         new_pos.play_unchecked(*m);
                         let (score, child_node) =
-                            searcher.alpha_beta(&mut new_pos, depth - 1, 1, -beta, -chunk_alpha, &config);
+                            searcher.alpha_beta(&new_pos, args.depth - 1, 1, -args.beta, -chunk_alpha, &config);
                         let score = -score;
 
                         if score > chunk_alpha {
@@ -252,14 +265,14 @@ impl PvsSearcher {
         let mut best_move = None;
         for ((move_option, score), node) in rx.iter() {
             root_node.children.push(node);
-            if score > alpha {
-                alpha = score;
+            if score > args.alpha {
+                args.alpha = score;
                 best_move = move_option;
             }
         }
 
-        root_node.score = alpha;
-        (best_move, alpha, root_node)
+        root_node.score = args.alpha;
+        (best_move, args.alpha, root_node)
     }
 
     fn alpha_beta(
@@ -366,7 +379,7 @@ impl PvsSearcher {
 
             let (score, child_node) = if i == 0 {
                 let (s, cn) =
-                    self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
+                    self.pvs_search(&new_pos, depth - 1, ply + 1, -beta, -a, config);
                 (-s, cn)
             } else {
                 let mut reduction = 0;
@@ -381,7 +394,7 @@ impl PvsSearcher {
                 }
 
                 let (zw_score, child_node) = self.pvs_search(
-                    &mut new_pos,
+                    &new_pos,
                     depth - 1 - reduction,
                     ply + 1,
                     -a - 1,
@@ -390,13 +403,9 @@ impl PvsSearcher {
                 );
                 let zw_score = -zw_score;
 
-                if zw_score > a && reduction > 0 {
+                if zw_score > a && zw_score < beta {
                     let (s, cn) =
-                        self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
-                    (-s, cn)
-                } else if zw_score > a && zw_score < beta {
-                    let (s, cn) =
-                        self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
+                        self.pvs_search(&new_pos, depth - 1, ply + 1, -beta, -a, config);
                     (-s, cn)
                 } else {
                     (zw_score, child_node)

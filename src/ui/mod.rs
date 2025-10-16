@@ -63,7 +63,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let mem_gauge = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title("Memory Usage"))
         .gauge_style(Style::default().fg(Color::Red))
-        .label(format!("{:.2}/{:.2} GB", mem_usage_gb, mem_total_gb))
+        .label(format!("{mem_usage_gb:.2}/{mem_total_gb:.2} GB"))
         .percent(mem_percentage as u16);
     frame.render_widget(mem_gauge, top_bar_layout[2]);
 
@@ -210,7 +210,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
             let piece = board.piece_at(square);
             let symbol = get_piece_symbol(piece);
 
-            let is_selected = from_square.map_or(false, |s| s == square) || to_square.map_or(false, |s| s == square);
+            let is_selected = from_square == Some(square) || to_square == Some(square);
 
             let bg_color = if is_selected {
                 Color::Yellow
@@ -231,7 +231,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
             };
 
             line.spans.push(Span::styled(
-                format!(" {} ", symbol),
+                format!(" {symbol} "),
                 Style::default().bg(bg_color).fg(fg_color),
             ));
         }
@@ -242,7 +242,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
     file_labels.spans.push(Span::raw("  "));
     for file in 'a'..='h' {
         file_labels.spans.push(Span::styled(
-            format!(" {} ", file),
+            format!(" {file} "),
             Style::default().fg(Color::Gray),
         ));
     }

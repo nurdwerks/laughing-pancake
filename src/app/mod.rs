@@ -195,7 +195,7 @@ impl App {
                     self.evolution_current_match_eval = eval;
                 }
                 EvolutionUpdate::MovePlayed(san, material, board) => {
-                    self.evolution_current_match_san.push_str(&format!("{} ", san));
+                    self.evolution_current_match_san.push_str(&format!("{san} "));
                     self.evolution_material_advantage = material;
                     self.evolution_current_match_board = Some(board);
                 }
@@ -204,7 +204,7 @@ impl App {
                     self.autoscroll_log();
                 }
                 EvolutionUpdate::Panic(msg) => {
-                    self.error_message = Some(format!("Evolution thread panicked: {}", msg));
+                    self.error_message = Some(format!("Evolution thread panicked: {msg}"));
                     self.should_quit = true;
                 }
             }
