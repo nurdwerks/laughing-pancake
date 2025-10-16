@@ -19,10 +19,9 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Top status bar
-            Constraint::Min(0),    // Main content area for matches
-            Constraint::Length(3), // Worker List
-            Constraint::Percentage(25), // Log
+            Constraint::Length(3),      // Top status bar
+            Constraint::Min(0),         // Main content area for matches
+            Constraint::Percentage(25), // Bottom area for Log and Workers
         ])
         .split(frame.size());
 
@@ -43,7 +42,6 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     // Sort matches by ID to ensure a consistent display order
     let mut sorted_matches = active_matches;
     sorted_matches.sort_by_key(|(id, _)| *id);
-
 
     for (i, (match_id, match_state)) in sorted_matches.iter().enumerate() {
         let match_pane = content_layout[i];
@@ -81,9 +79,14 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         frame.render_widget(san_widget, match_layout[1]);
     }
 
-
-    // --- Worker List ---
-    draw_worker_list(frame, app, main_layout[2]);
+    // --- Bottom Pane (Log and Workers) ---
+    let bottom_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // Log
+            Constraint::Percentage(50), // Worker List
+        ])
+        .split(main_layout[2]);
 
 
     // --- Log View ---
@@ -95,7 +98,10 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let log_list = List::new(log_items)
         .block(Block::default().borders(Borders::ALL).title("Log"))
         .direction(ratatui::widgets::ListDirection::BottomToTop);
-    frame.render_stateful_widget(log_list, main_layout[3], &mut app.evolution_log_state);
+    frame.render_stateful_widget(log_list, bottom_layout[0], &mut app.evolution_log_state);
+
+    // --- Worker List ---
+    draw_worker_list(frame, app, bottom_layout[1]);
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
