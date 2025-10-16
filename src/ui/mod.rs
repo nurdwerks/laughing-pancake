@@ -120,33 +120,62 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     frame.render_widget(workers_list, top_row_layout[1]);
 
 
-    // Draw Match Info
-    let info_text = vec![
-        Line::from(vec![
-            Span::styled("Evaluation: ", Style::default().bold()),
-            Span::raw(format!("{}", app.evolution_current_match_eval)),
-        ]),
-        Line::from(vec![
-            Span::styled("Material: ", Style::default().bold()),
-            Span::raw(format!("{}", app.evolution_material_advantage)),
-        ]),
-        Line::from(vec![
-            Span::styled("White: ", Style::default().bold()),
-            Span::raw(&app.evolution_white_player),
-        ]),
-        Line::from(vec![
-            Span::styled("Black: ", Style::default().bold()),
-            Span::raw(&app.evolution_black_player),
-        ]),
-    ];
-    let info_widget = Paragraph::new(info_text)
-        .block(Block::default().borders(Borders::ALL).title("Match Info"))
+    // --- Match Info Panes ---
+    let match_info_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // White Player
+            Constraint::Percentage(50), // Black Player
+        ])
+        .split(bottom_row_layout[0]);
+
+    let white_config = app.get_config_for_player(&app.evolution_white_player);
+    let black_config = app.get_config_for_player(&app.evolution_black_player);
+
+    let white_info_text = if let Some(config) = white_config {
+        vec![
+            Line::from(vec![Span::styled("White", Style::default().bold().fg(Color::Cyan))]),
+            Line::from(vec![Span::raw(format!("Profile: {}", app.evolution_white_player))]),
+            Line::from(vec![Span::raw(format!("Depth: {}", config.search_depth))]),
+            Line::from(vec![Span::raw(format!("PVS: {}", config.use_pvs))]),
+            Line::from(vec![Span::raw(format!("NMP: {}", config.use_null_move_pruning))]),
+            Line::from(vec![Span::raw(format!("LMR: {}", config.use_lmr))]),
+
+        ]
+    } else {
+        vec![Line::from("White: Waiting...")]
+    };
+
+    let black_info_text = if let Some(config) = black_config {
+        vec![
+            Line::from(vec![Span::styled("Black", Style::default().bold().fg(Color::Blue))]),
+            Line::from(vec![Span::raw(format!("Profile: {}", app.evolution_black_player))]),
+            Line::from(vec![Span::raw(format!("Depth: {}", config.search_depth))]),
+            Line::from(vec![Span::raw(format!("PVS: {}", config.use_pvs))]),
+            Line::from(vec![Span::raw(format!("NMP: {}", config.use_null_move_pruning))]),
+            Line::from(vec![Span::raw(format!("LMR: {}", config.use_lmr))]),
+        ]
+    } else {
+        vec![Line::from("Black: Waiting...")]
+    };
+
+    let white_info_widget = Paragraph::new(white_info_text)
+        .block(Block::default().borders(Borders::ALL).title("White Player"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(info_widget, bottom_row_layout[0]);
+    frame.render_widget(white_info_widget, match_info_layout[0]);
+
+    let black_info_widget = Paragraph::new(black_info_text)
+        .block(Block::default().borders(Borders::ALL).title("Black Player"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(black_info_widget, match_info_layout[1]);
 
     // Draw SAN Movelist
     let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())
-        .block(Block::default().borders(Borders::ALL).title("SAN"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("SAN | Eval: {} | Material: {}", app.evolution_current_match_eval, app.evolution_material_advantage))
+        )
         .wrap(Wrap { trim: true });
     frame.render_widget(san_widget, bottom_row_layout[1]);
 
