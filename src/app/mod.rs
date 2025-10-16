@@ -186,8 +186,19 @@ impl App {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
                 }
-                EvolutionUpdate::MatchCompleted(_game_match) => {
+                EvolutionUpdate::MatchCompleted(game_match) => {
                     self.evolution_matches_completed += 1;
+
+                    let result_str = match game_match.result.as_str() {
+                        "1-0" => format!("White wins ({})", game_match.white_player_name),
+                        "0-1" => format!("Black wins ({})", game_match.black_player_name),
+                        "1/2-1/2" => "Draw".to_string(),
+                        _ => "Unknown result".to_string(),
+                    };
+                    let log_message = format!("Match complete: {}.", result_str);
+                    self.evolution_log.push(log_message);
+                    self.autoscroll_log();
+
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
                 }
