@@ -224,22 +224,52 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, title: &st
 fn get_piece_symbol(piece: Option<Piece>) -> &'static str {
     match piece {
         Some(Piece {
-            role: Role::King, ..
+            role: Role::King,
+            color: shakmaty::Color::White,
+        }) => "♔",
+        Some(Piece {
+            role: Role::Queen,
+            color: shakmaty::Color::White,
+        }) => "♕",
+        Some(Piece {
+            role: Role::Rook,
+            color: shakmaty::Color::White,
+        }) => "♖",
+        Some(Piece {
+            role: Role::Bishop,
+            color: shakmaty::Color::White,
+        }) => "♗",
+        Some(Piece {
+            role: Role::Knight,
+            color: shakmaty::Color::White,
+        }) => "♘",
+        Some(Piece {
+            role: Role::Pawn,
+            color: shakmaty::Color::White,
+        }) => "♙",
+        Some(Piece {
+            role: Role::King,
+            color: shakmaty::Color::Black,
         }) => "♚",
         Some(Piece {
-            role: Role::Queen, ..
+            role: Role::Queen,
+            color: shakmaty::Color::Black,
         }) => "♛",
         Some(Piece {
-            role: Role::Rook, ..
+            role: Role::Rook,
+            color: shakmaty::Color::Black,
         }) => "♜",
         Some(Piece {
-            role: Role::Bishop, ..
+            role: Role::Bishop,
+            color: shakmaty::Color::Black,
         }) => "♝",
         Some(Piece {
-            role: Role::Knight, ..
+            role: Role::Knight,
+            color: shakmaty::Color::Black,
         }) => "♞",
         Some(Piece {
-            role: Role::Pawn, ..
+            role: Role::Pawn,
+            color: shakmaty::Color::Black,
         }) => "♟",
         None => " ",
     }
