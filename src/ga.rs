@@ -27,6 +27,7 @@ pub enum EvolutionUpdate {
     StatusUpdate(String),
     Panic(String),
 }
+#[derive(Clone)]
 struct CacheManager {
     caches: HashMap<String, Arc<Mutex<EvaluationCache>>>,
 }
@@ -216,39 +217,58 @@ impl EvolutionManager {
         self.update_sender.send(EvolutionUpdate::TournamentStart(total_matches, skipped_matches)).map_err(|_| ())?;
 
         let (results_tx, results_rx) = unbounded();
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build().unwrap();
+        let (jobs_tx, jobs_rx) = unbounded::<(usize, Match)>();
         let population_arc = Arc::new(population.clone());
 
-        pool.scope(|s| {
-            for (match_index, game_match) in matches_to_play {
-                let white_player_name = game_match.white_player_name.clone();
-                let black_player_name = game_match.black_player_name.clone();
-                let population_clone = Arc::clone(&population_arc);
-                let white_cache = cache_manager.get_cache_for_player(&white_player_name);
-                let black_cache = cache_manager.get_cache_for_player(&black_player_name);
-                let sender_clone = self.update_sender.clone();
-                let results_tx_clone = results_tx.clone();
-                let self_clone = self.clone();
+        // Spawn a pool of worker threads
+        const NUM_WORKERS: usize = 2;
+        let mut worker_handles = Vec::new();
+        for _ in 0..NUM_WORKERS {
+            let jobs_rx_clone = jobs_rx.clone();
+            let results_tx_clone = results_tx.clone();
+            let population_clone = Arc::clone(&population_arc);
+            let mut cache_manager_clone = cache_manager.clone();
+            let sender_clone = self.update_sender.clone();
+            let self_clone = self.clone();
 
-                s.spawn(move |_| {
+            let handle = std::thread::spawn(move || {
+                while let Ok((match_index, game_match)) = jobs_rx_clone.recv() {
+                    let white_player_name = game_match.white_player_name.clone();
+                    let black_player_name = game_match.black_player_name.clone();
+                    let white_cache = cache_manager_clone.get_cache_for_player(&white_player_name);
+                    let black_cache = cache_manager_clone.get_cache_for_player(&black_player_name);
                     let white_id = parse_id_from_name(&white_player_name);
                     let black_id = parse_id_from_name(&black_player_name);
                     let white_config = &population_clone.individuals[white_id].config;
                     let black_config = &population_clone.individuals[black_id].config;
 
-                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(match_index, white_player_name.clone(), black_player_name.clone()));
-                    let (result, san) = self_clone.play_game(match_index, white_config, black_config, white_cache, black_cache).unwrap();
+                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(match_index, white_player_name, black_player_name));
+                    if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, white_cache, black_cache) {
+                        if results_tx_clone.send((match_index, result, san)).is_err() {
+                            // Main thread has likely shut down, so we can exit.
+                            break;
+                        }
+                    }
+                }
+            });
+            worker_handles.push(handle);
+        }
 
-                    results_tx_clone.send((match_index, result, san)).unwrap();
-                });
+        // Send all jobs to the workers
+        for (match_index, game_match) in matches_to_play.clone() {
+            if jobs_tx.send((match_index, game_match)).is_err() {
+                // This would happen if all worker threads panicked and the channel is closed.
+                break;
             }
-        });
+        }
+        drop(jobs_tx); // Close the job channel to signal workers to exit when done
 
-        // Drop the original sender so the receiver knows when all threads are done.
+        // Drop the original results sender. The loop below will end when all worker threads
+        // have dropped their sender clones.
         drop(results_tx);
 
         // Process results as they come in
-        for (match_index, result, san) in results_rx.iter() {
+        for (match_index, result, san) in results_rx {
             let mut current_match = generation.matches[match_index].clone();
             current_match.san = san;
             current_match.status = "completed".to_string();
@@ -274,6 +294,11 @@ impl EvolutionManager {
             generation.matches[match_index] = current_match.clone();
             save_generation(generation);
             self.update_sender.send(EvolutionUpdate::MatchCompleted(match_index, current_match)).map_err(|_| ()).unwrap();
+        }
+
+        // Wait for all worker threads to finish
+        for handle in worker_handles {
+            handle.join().unwrap();
         }
 
         // Print final tournament results
