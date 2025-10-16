@@ -1,6 +1,7 @@
 // src/game/search/mcts.rs
 
 use crate::game::evaluation;
+use crate::game::evaluation::see;
 use crate::game::search::{MoveTreeNode, SearchConfig, Searcher};
 use crossbeam_channel::Sender;
 use crossbeam_utils::thread;
@@ -201,6 +202,13 @@ impl Node {
 
     fn expand(&mut self) {
         for m in self.pos.legal_moves() {
+            if m.is_capture() {
+                if let Some(from) = m.from() {
+                    if see::see(self.pos.board(), from, m.to()) < 0 {
+                        continue; // Prune losing captures
+                    }
+                }
+            }
             let mut new_pos = self.pos.clone();
             new_pos.play_unchecked(m);
             self.children.push(Node::new(new_pos, Some(m)));
