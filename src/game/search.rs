@@ -110,6 +110,8 @@ pub struct MoveTreeNode {
     pub children: Vec<MoveTreeNode>,
 }
 
+use std::any::Any;
+
 pub trait Searcher: Send {
     fn search(
         &mut self,
@@ -119,6 +121,7 @@ pub trait Searcher: Send {
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
         update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>);
+    fn as_any(&self) -> &dyn Any;
 }
 
 #[derive(Clone)]
@@ -129,6 +132,10 @@ pub struct PvsSearcher {
 }
 
 impl Searcher for PvsSearcher {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn search(
         &mut self,
         pos: &Chess,
@@ -183,6 +190,18 @@ impl PvsSearcher {
             killer_moves: [[None; 2]; 64],
             evaluation_cache: Arc::new(Mutex::new(EvaluationCache::new())),
         }
+    }
+
+    pub fn with_cache(cache: EvaluationCache) -> Self {
+        Self {
+            history_table: [[0; 64]; 12],
+            killer_moves: [[None; 2]; 64],
+            evaluation_cache: Arc::new(Mutex::new(cache)),
+        }
+    }
+
+    pub fn get_cache(&self) -> Arc<Mutex<EvaluationCache>> {
+        self.evaluation_cache.clone()
     }
 
     fn pvs_root_search(
