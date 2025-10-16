@@ -15,8 +15,6 @@ const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
 const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
-use tracing::{info, instrument};
-
 #[derive(Debug, Clone)]
 pub enum EvolutionUpdate {
     GenerationStarted(u32),
@@ -65,9 +63,8 @@ impl EvolutionManager {
         }
     }
 
-    #[instrument(skip(self))]
     fn run_internal(&self) -> Result<(), ()> {
-        info!("Starting evolution process");
+        self.send_status("Starting evolution process".to_string())?;
         let mut generation_index = find_latest_complete_generation().unwrap_or(0);
         if generation_index > 0 {
              self.send_status(format!("Resuming from last completed generation: {}.", generation_index))?;
@@ -138,9 +135,7 @@ impl EvolutionManager {
     }
 
     /// Takes a completed tournament population and evolves it to create the next generation.
-    #[instrument(skip(self, population, next_generation_dir))]
     fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
-        info!("Evolving to the next generation");
         self.send_status("\nEvolving to the next generation...".to_string())?;
 
         // 1. Selection: Find the top 5 individuals
@@ -189,9 +184,8 @@ impl EvolutionManager {
     }
 
     /// Runs all the games in the tournament, saving progress after each game.
-    #[instrument(skip(self, population, generation, _generation_dir))]
     fn run_tournament(&self, population: &mut Population, generation: &mut Generation, _generation_dir: &Path) -> Result<(), ()> {
-        info!("Running tournament for generation {}", generation.generation_index);
+        self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
         let total_matches = generation.matches.len();
         for i in 0..total_matches {
             if generation.matches[i].status == "completed" {
@@ -261,9 +255,7 @@ impl EvolutionManager {
     }
 
     /// Simulates a single game between two AI configurations.
-    #[instrument(skip(self, white_config, black_config))]
     fn play_game(&self, white_config: &SearchConfig, black_config: &SearchConfig) -> Result<(GameResult, String), ()> {
-        info!("Playing game");
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
@@ -281,9 +273,10 @@ impl EvolutionManager {
             self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, 0)).map_err(|_| ())?;
 
             let workers = self.workers.clone();
+            let update_sender = self.update_sender.clone();
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(workers));
+                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(workers), Some(update_sender));
                     search_result_tx.send(search_result).unwrap();
                 });
 

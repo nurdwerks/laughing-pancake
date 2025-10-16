@@ -163,19 +163,14 @@ impl App {
                 EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
-                    self.evolution_workers.lock().unwrap().clear();
                 }
                 EvolutionUpdate::MatchCompleted(_game_match) => {
                     self.evolution_matches_completed += 1;
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
-                    self.evolution_workers.lock().unwrap().clear();
                 }
                 EvolutionUpdate::ThinkingUpdate(pv, eval) => {
                     self.evolution_current_match_eval = eval;
-                    if pv.starts_with("AI is thinking") {
-                        self.evolution_workers.lock().unwrap().clear();
-                    }
                 }
                 EvolutionUpdate::MovePlayed(san, material, board) => {
                     self.evolution_current_match_san.push_str(&format!("{} ", san));

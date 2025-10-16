@@ -99,6 +99,8 @@ impl Default for SearchConfig {
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use crate::app::Worker;
+use crate::ga::EvolutionUpdate;
+use crossbeam_channel::Sender;
 
 #[derive(Clone, Debug)]
 pub struct MoveTreeNode {
@@ -114,6 +116,7 @@ pub trait Searcher {
         depth: u8,
         config: &SearchConfig,
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>);
 }
 
@@ -130,9 +133,10 @@ impl Searcher for PvsSearcher {
         depth: u8,
         config: &SearchConfig,
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
-            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers);
+            let (move_opt, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers, update_sender);
             return (move_opt, score, Some(tree));
         }
 
@@ -141,10 +145,10 @@ impl Searcher for PvsSearcher {
         let alpha = score_guess - ASPIRATION_WINDOW_DELTA;
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
-        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta, workers.clone());
+        let (mut best_move, mut score, mut tree) = self.pvs_root_search(pos, depth, config, alpha, beta, workers.clone(), update_sender.clone());
 
         if score <= alpha || score >= beta {
-            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers);
+            (best_move, score, tree) = self.pvs_root_search(pos, depth, config, -MATE_SCORE, MATE_SCORE, workers, update_sender);
         }
 
         (best_move, score, Some(tree))
@@ -160,6 +164,7 @@ impl PvsSearcher {
         mut alpha: i32,
         beta: i32,
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, MoveTreeNode) {
         let mut legal_moves = pos.legal_moves();
         let mut root_node = MoveTreeNode {
@@ -182,6 +187,7 @@ impl PvsSearcher {
                 let mut searcher = self.clone();
                 let tx = tx.clone();
                 let workers = workers.clone();
+                let update_sender = update_sender.clone();
                 let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
 
                 s.spawn(move |_| {
@@ -191,11 +197,17 @@ impl PvsSearcher {
                         .collect::<Vec<_>>()
                         .join(", ");
 
+                    let worker_display_name = format!("PVS: {}", worker_name);
+
+                    if let Some(sender) = &update_sender {
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] starting: {}", worker_id, worker_display_name)));
+                    }
+
                     if let Some(w) = &workers {
                         let mut worker_list = w.lock().unwrap();
                         worker_list.push(Worker {
                             id: worker_id,
-                            name: format!("Searching moves: {}", worker_name),
+                            name: worker_display_name.clone(),
                             start_time: Instant::now(),
                         });
                     }
@@ -223,6 +235,10 @@ impl PvsSearcher {
                     if let Some(w) = &workers {
                         let mut worker_list = w.lock().unwrap();
                         worker_list.retain(|worker| worker.id != worker_id);
+                    }
+
+                    if let Some(sender) = &update_sender {
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] finished.", worker_id)));
                     }
                 });
             }
@@ -453,25 +469,19 @@ pub fn search(
     depth: u8,
     config: &SearchConfig,
     workers: Option<Arc<Mutex<Vec<Worker>>>>,
+    update_sender: Option<Sender<EvolutionUpdate>>,
 ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
-    let (best_move, score, move_tree) = match config.search_algorithm {
+    match config.search_algorithm {
         SearchAlgorithm::Pvs => {
             let mut searcher = PvsSearcher {
                 history_table: [[0; 64]; 12],
                 killer_moves: [[None; 2]; 64],
             };
-            searcher.search(pos, depth, config, workers)
+            searcher.search(pos, depth, config, workers, update_sender)
         }
         SearchAlgorithm::Mcts => {
             let mut searcher = MctsSearcher::new();
-            searcher.search(pos, depth, config, workers)
+            searcher.search(pos, depth, config, workers, update_sender)
         }
-    };
-
-    if let Some(m) = best_move {
-        let san = SanPlus::from_move(pos.clone(), m);
-        tracing::info!("Move chosen: {} (depth {})", san, depth);
     }
-
-    (best_move, score, move_tree)
 }
