@@ -93,7 +93,12 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .split(content_layout[1]);
 
     // Draw Board
-    let board_block = Block::default().borders(Borders::ALL).title("Current Match");
+    let board_title = if !app.evolution_white_player.is_empty() {
+        format!("White: {} vs Black: {}", app.evolution_white_player, app.evolution_black_player)
+    } else {
+        "Current Match".to_string()
+    };
+    let board_block = Block::default().borders(Borders::ALL).title(board_title);
     if let Some(board) = &app.evolution_current_match_board {
         draw_board(frame, top_row_layout[0], board, "");
     } else {
@@ -120,54 +125,11 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     frame.render_widget(workers_list, top_row_layout[1]);
 
 
-    // --- Match Info Panes ---
-    let match_info_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50), // White Player
-            Constraint::Percentage(50), // Black Player
-        ])
-        .split(bottom_row_layout[0]);
-
-    let white_config = app.get_config_for_player(&app.evolution_white_player);
-    let black_config = app.get_config_for_player(&app.evolution_black_player);
-
-    let white_info_text = if let Some(config) = white_config {
-        vec![
-            Line::from(vec![Span::styled("White", Style::default().bold().fg(Color::Cyan))]),
-            Line::from(vec![Span::raw(format!("Profile: {}", app.evolution_white_player))]),
-            Line::from(vec![Span::raw(format!("Depth: {}", config.search_depth))]),
-            Line::from(vec![Span::raw(format!("PVS: {}", config.use_pvs))]),
-            Line::from(vec![Span::raw(format!("NMP: {}", config.use_null_move_pruning))]),
-            Line::from(vec![Span::raw(format!("LMR: {}", config.use_lmr))]),
-
-        ]
-    } else {
-        vec![Line::from("White: Waiting...")]
-    };
-
-    let black_info_text = if let Some(config) = black_config {
-        vec![
-            Line::from(vec![Span::styled("Black", Style::default().bold().fg(Color::Blue))]),
-            Line::from(vec![Span::raw(format!("Profile: {}", app.evolution_black_player))]),
-            Line::from(vec![Span::raw(format!("Depth: {}", config.search_depth))]),
-            Line::from(vec![Span::raw(format!("PVS: {}", config.use_pvs))]),
-            Line::from(vec![Span::raw(format!("NMP: {}", config.use_null_move_pruning))]),
-            Line::from(vec![Span::raw(format!("LMR: {}", config.use_lmr))]),
-        ]
-    } else {
-        vec![Line::from("Black: Waiting...")]
-    };
-
-    let white_info_widget = Paragraph::new(white_info_text)
-        .block(Block::default().borders(Borders::ALL).title("White Player"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(white_info_widget, match_info_layout[0]);
-
-    let black_info_widget = Paragraph::new(black_info_text)
-        .block(Block::default().borders(Borders::ALL).title("Black Player"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(black_info_widget, match_info_layout[1]);
+    // --- Match Info Panes (removed for a cleaner look) ---
+    let match_info_block = Block::default()
+        .borders(Borders::ALL)
+        .title("Match Information");
+    frame.render_widget(match_info_block, bottom_row_layout[0]);
 
     // Draw SAN Movelist
     let san_widget = Paragraph::new(app.evolution_current_match_san.as_str())

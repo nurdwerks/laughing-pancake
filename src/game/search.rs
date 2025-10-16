@@ -192,16 +192,12 @@ impl PvsSearcher {
         }
     }
 
-    pub fn with_cache(cache: EvaluationCache) -> Self {
+    pub fn with_shared_cache(cache: Arc<Mutex<EvaluationCache>>) -> Self {
         Self {
             history_table: [[0; 64]; 12],
             killer_moves: [[None; 2]; 64],
-            evaluation_cache: Arc::new(Mutex::new(cache)),
+            evaluation_cache: cache,
         }
-    }
-
-    pub fn get_cache(&self) -> Arc<Mutex<EvaluationCache>> {
-        self.evaluation_cache.clone()
     }
 
     fn pvs_root_search(
