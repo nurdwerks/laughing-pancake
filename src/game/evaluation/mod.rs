@@ -126,35 +126,48 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         }
     }
 
-    white_score += pawn_structure::evaluate(board, Color::White, config) * config.pawn_structure_weight / 100;
-    black_score += pawn_structure::evaluate(board, Color::Black, config) * config.pawn_structure_weight / 100;
+    let total_weight = config.pawn_structure_weight
+        + config.piece_mobility_weight
+        + config.king_safety_weight
+        + config.piece_development_weight
+        + config.rook_placement_weight
+        + config.bishop_placement_weight
+        + config.knight_placement_weight
+        + config.threat_analysis_weight
+        + config.space_evaluation_weight
+        + config.initiative_evaluation_weight;
 
-    white_score += mobility::evaluate(board, Color::White) * config.piece_mobility_weight / 100;
-    black_score += mobility::evaluate(board, Color::Black) * config.piece_mobility_weight / 100;
+    if total_weight > 0 {
+        white_score += pawn_structure::evaluate(board, Color::White, config) * config.pawn_structure_weight / total_weight;
+        black_score += pawn_structure::evaluate(board, Color::Black, config) * config.pawn_structure_weight / total_weight;
 
-    white_score += king_safety::evaluate(board, Color::White, config) * config.king_safety_weight / 100;
-    black_score += king_safety::evaluate(board, Color::Black, config) * config.king_safety_weight / 100;
+        white_score += mobility::evaluate(board, Color::White) * config.piece_mobility_weight / total_weight;
+        black_score += mobility::evaluate(board, Color::Black) * config.piece_mobility_weight / total_weight;
 
-    white_score += development::evaluate(board, Color::White) * config.piece_development_weight / 100;
-    black_score += development::evaluate(board, Color::Black) * config.piece_development_weight / 100;
+        white_score += king_safety::evaluate(board, Color::White, config) * config.king_safety_weight / total_weight;
+        black_score += king_safety::evaluate(board, Color::Black, config) * config.king_safety_weight / total_weight;
 
-    white_score += rooks::evaluate(board, Color::White) * config.rook_placement_weight / 100;
-    black_score += rooks::evaluate(board, Color::Black) * config.rook_placement_weight / 100;
+        white_score += development::evaluate(board, Color::White) * config.piece_development_weight / total_weight;
+        black_score += development::evaluate(board, Color::Black) * config.piece_development_weight / total_weight;
 
-    white_score += bishops::evaluate(board, Color::White, config) * config.bishop_placement_weight / 100;
-    black_score += bishops::evaluate(board, Color::Black, config) * config.bishop_placement_weight / 100;
+        white_score += rooks::evaluate(board, Color::White) * config.rook_placement_weight / total_weight;
+        black_score += rooks::evaluate(board, Color::Black) * config.rook_placement_weight / total_weight;
 
-    white_score += knights::evaluate(board, Color::White) * config.knight_placement_weight / 100;
-    black_score += knights::evaluate(board, Color::Black) * config.knight_placement_weight / 100;
+        white_score += bishops::evaluate(board, Color::White, config) * config.bishop_placement_weight / total_weight;
+        black_score += bishops::evaluate(board, Color::Black, config) * config.bishop_placement_weight / total_weight;
 
-    white_score += threats::evaluate(board, Color::White) * config.threat_analysis_weight / 100;
-    black_score += threats::evaluate(board, Color::Black) * config.threat_analysis_weight / 100;
+        white_score += knights::evaluate(board, Color::White) * config.knight_placement_weight / total_weight;
+        black_score += knights::evaluate(board, Color::Black) * config.knight_placement_weight / total_weight;
 
-    white_score += space::evaluate(board, Color::White) * config.space_evaluation_weight / 100;
-    black_score += space::evaluate(board, Color::Black) * config.space_evaluation_weight / 100;
+        white_score += threats::evaluate(board, Color::White) * config.threat_analysis_weight / total_weight;
+        black_score += threats::evaluate(board, Color::Black) * config.threat_analysis_weight / total_weight;
 
-    white_score += initiative::evaluate(board, Color::White) * config.initiative_evaluation_weight / 100;
-    black_score += initiative::evaluate(board, Color::Black) * config.initiative_evaluation_weight / 100;
+        white_score += space::evaluate(board, Color::White) * config.space_evaluation_weight / total_weight;
+        black_score += space::evaluate(board, Color::Black) * config.space_evaluation_weight / total_weight;
+
+        white_score += initiative::evaluate(board, Color::White) * config.initiative_evaluation_weight / total_weight;
+        black_score += initiative::evaluate(board, Color::Black) * config.initiative_evaluation_weight / total_weight;
+    }
 
     let total_score = white_score - black_score;
 
