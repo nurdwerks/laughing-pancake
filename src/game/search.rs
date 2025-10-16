@@ -343,6 +343,10 @@ impl PvsSearcher {
             children: Vec::new(),
         };
 
+        if pos.is_game_over() && pos.outcome().winner().is_none() {
+            return (0, current_node);
+        }
+
         let mut legal_moves = pos.legal_moves();
         if legal_moves.is_empty() {
             if pos.is_checkmate() { return (-MATE_SCORE + ply as i32, current_node); }
