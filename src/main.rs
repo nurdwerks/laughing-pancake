@@ -3,16 +3,7 @@ mod ui;
 mod game;
 mod ga;
 
-use app::{App, TuiMakeWriter};
 use clap::Parser;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use ratatui::{prelude::*, Terminal};
-use std::{error::Error, io};
-use tracing_subscriber::{fmt, prelude::*};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -26,6 +17,7 @@ struct Args {
     opening_book: Option<String>,
 }
 
+#[cfg(not(test))]
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 

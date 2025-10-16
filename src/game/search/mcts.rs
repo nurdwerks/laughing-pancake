@@ -156,7 +156,8 @@ impl MctsSearcher {
 }
 
 use super::MoveTreeNode;
-use crossbeam_channel::Sender;
+use crate::app::Worker;
+use std::sync::{Arc, Mutex};
 
 impl Searcher for MctsSearcher {
     fn search(
@@ -164,11 +165,11 @@ impl Searcher for MctsSearcher {
         pos: &Chess,
         _depth: u8,
         config: &SearchConfig,
-        move_tree_sender: Option<Sender<MoveTreeNode>>,
+        _workers: Option<Arc<Mutex<Vec<Worker>>>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         let root_index = 0;
 
-        for i in 0..config.mcts_simulations {
+        for _i in 0..config.mcts_simulations {
             // 1. Selection
             let (leaf_index, leaf_pos) = self.select(root_index, pos);
 
@@ -180,15 +181,6 @@ impl Searcher for MctsSearcher {
 
             // 4. Backpropagation
             self.backpropagate(leaf_index, result);
-
-            if i % 100 == 0 {
-                if let Some(sender) = &move_tree_sender {
-                    let tree = self.build_move_tree_recursive(root_index, pos, "root".to_string());
-                    if sender.send(tree).is_err() {
-                        break;
-                    }
-                }
-            }
         }
 
         (
