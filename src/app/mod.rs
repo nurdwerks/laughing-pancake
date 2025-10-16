@@ -204,7 +204,7 @@ impl App {
                         "1/2-1/2" => "Draw".to_string(),
                         _ => "Unknown result".to_string(),
                     };
-                    let log_message = format!("[Match {}] Complete: {}.", match_id, result_str);
+                    let log_message = format!("[Match {match_id}] Complete: {result_str}.");
                     self.evolution_log.push(log_message);
                     self.autoscroll_log();
                 }
