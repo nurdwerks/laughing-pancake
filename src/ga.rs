@@ -8,7 +8,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
-use crate::game::search::{self, SearchConfig, SearchAlgorithm};
+use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher};
 use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
@@ -259,11 +259,23 @@ impl EvolutionManager {
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
+        let mut white_searcher: Box<dyn Searcher> = if white_config.search_algorithm == SearchAlgorithm::Pvs {
+            Box::new(PvsSearcher::new())
+        } else {
+            Box::new(search::mcts::MctsSearcher::new())
+        };
+
+        let mut black_searcher: Box<dyn Searcher> = if black_config.search_algorithm == SearchAlgorithm::Pvs {
+            Box::new(PvsSearcher::new())
+        } else {
+            Box::new(search::mcts::MctsSearcher::new())
+        };
+
         while !pos.is_game_over() {
-            let config = if pos.turn().is_white() {
-                white_config.clone()
+            let (config, searcher) = if pos.turn().is_white() {
+                (white_config.clone(), &mut white_searcher)
             } else {
-                black_config.clone()
+                (black_config.clone(), &mut black_searcher)
             };
             let current_pos = pos.clone();
 
@@ -276,7 +288,7 @@ impl EvolutionManager {
             let update_sender = self.update_sender.clone();
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(workers), Some(update_sender));
+                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), Some(update_sender));
                     search_result_tx.send(search_result).unwrap();
                 });
 
@@ -436,6 +448,7 @@ fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> Search
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
         use_killer_moves: if rng.gen_bool(0.5) { p1.use_killer_moves } else { p2.use_killer_moves },
+        use_transposition_table: if rng.gen_bool(0.5) { p1.use_transposition_table } else { p2.use_transposition_table },
         mcts_simulations: if rng.gen_bool(0.5) { p1.mcts_simulations } else { p2.mcts_simulations },
         use_quiescence_search: if rng.gen_bool(0.5) { p1.use_quiescence_search } else { p2.use_quiescence_search },
         use_pvs: if rng.gen_bool(0.5) { p1.use_pvs } else { p2.use_pvs },
@@ -478,6 +491,7 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
         config.search_depth = config.search_depth.clamp(3, 5);
     }
     // Mutate booleans with a 3% chance
+    if rng.gen_bool(0.03) { config.use_transposition_table = !config.use_transposition_table; }
     if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }
     if rng.gen_bool(0.03) { config.use_history_heuristic = !config.use_history_heuristic; }
     if rng.gen_bool(0.03) { config.use_killer_moves = !config.use_killer_moves; }
@@ -613,6 +627,7 @@ fn generate_initial_population(generation_dir: &Path) {
         config.search_depth = rng.gen_range(3..=5);
 
         // Randomize booleans
+        config.use_transposition_table = rng.gen_bool(0.5);
         config.use_aspiration_windows = rng.gen_bool(0.5);
         config.use_history_heuristic = rng.gen_bool(0.5);
         config.use_killer_moves = rng.gen_bool(0.5);

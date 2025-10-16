@@ -3,11 +3,14 @@
 pub mod quiescence;
 pub mod mcts;
 pub mod delta; // Still needed for quiescence search
+pub mod tt;
 
-use shakmaty::{Chess, Move, Position, Piece, san::SanPlus};
+use shakmaty::{Chess, Move, Position, Piece, san::SanPlus, EnPassantMode};
+use shakmaty::zobrist::ZobristHash;
 use crate::game::evaluation;
 use crossbeam_utils::thread;
 use num_cpus;
+use tt::TranspositionTable;
 
 const MATE_SCORE: i32 = 1_000_000;
 
@@ -26,6 +29,7 @@ pub struct SearchConfig {
     pub use_aspiration_windows: bool,
     pub use_history_heuristic: bool,
     pub use_killer_moves: bool,
+    pub use_transposition_table: bool,
     pub mcts_simulations: u32,
     pub use_quiescence_search: bool,
     pub use_pvs: bool,
@@ -64,6 +68,7 @@ impl Default for SearchConfig {
             use_aspiration_windows: false,
             use_history_heuristic: false,
             use_killer_moves: false,
+            use_transposition_table: true,
             mcts_simulations: 1000,
             use_quiescence_search: true,
             use_pvs: true, // Default to true now that it's properly implemented
@@ -109,7 +114,7 @@ pub struct MoveTreeNode {
     pub children: Vec<MoveTreeNode>,
 }
 
-pub trait Searcher {
+pub trait Searcher: Send {
     fn search(
         &mut self,
         pos: &Chess,
@@ -124,6 +129,7 @@ pub trait Searcher {
 pub struct PvsSearcher {
     history_table: [[i32; 64]; 12],
     killer_moves: [[Option<Move>; 2]; 64],
+    transposition_table: Arc<Mutex<TranspositionTable>>,
 }
 
 impl Searcher for PvsSearcher {
@@ -156,6 +162,14 @@ impl Searcher for PvsSearcher {
 }
 
 impl PvsSearcher {
+    pub fn new() -> Self {
+        Self {
+            history_table: [[0; 64]; 12],
+            killer_moves: [[None; 2]; 64],
+            transposition_table: Arc::new(Mutex::new(TranspositionTable::new())),
+        }
+    }
+
     fn pvs_root_search(
         &mut self,
         pos: &Chess,
@@ -175,7 +189,7 @@ impl PvsSearcher {
         if legal_moves.is_empty() {
             return (None, evaluation::evaluate(pos, config), root_node);
         }
-        self.order_moves(&mut legal_moves, pos, 0, config);
+        self.order_moves(&mut legal_moves, pos, 0, config, None);
 
         let num_threads = num_cpus::get();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -187,6 +201,7 @@ impl PvsSearcher {
                 let mut searcher = self.clone();
                 let tx = tx.clone();
                 let workers = workers.clone();
+                let transposition_table = self.transposition_table.clone();
                 let update_sender = update_sender.clone();
                 let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
 
@@ -306,10 +321,28 @@ impl PvsSearcher {
         pos: &Chess,
         depth: u8,
         ply: u8,
-        mut alpha: i32,
+        alpha: i32,
         beta: i32,
         config: &SearchConfig,
     ) -> (i32, MoveTreeNode) {
+        if config.use_transposition_table {
+            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
+            if let Some(entry) = self.transposition_table.lock().unwrap().probe(&hash) {
+                if entry.depth >= depth {
+                    let score = entry.score;
+                    let mut node = MoveTreeNode {
+                        move_san: "tt_hit".to_string(),
+                        score,
+                        children: vec![],
+                    };
+                    if let Some(best_move) = entry.best_move {
+                        node.move_san = SanPlus::from_move(pos.clone(), best_move).to_string();
+                    }
+                    return (score, node);
+                }
+            }
+        }
+
         const LMR_MIN_DEPTH: u8 = 3;
         const LMR_MIN_MOVE_INDEX: usize = 2;
         const FUTILITY_MARGIN_PER_DEPTH: [i32; 4] = [0, 100, 250, 500];
@@ -346,7 +379,16 @@ impl PvsSearcher {
             }
         }
 
-        self.order_moves(&mut legal_moves, pos, ply, config);
+        let tt_move = if config.use_transposition_table {
+            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
+            self.transposition_table.lock().unwrap().probe(&hash).and_then(|e| e.best_move)
+        } else {
+            None
+        };
+        self.order_moves(&mut legal_moves, pos, ply, config, tt_move);
+
+        let mut best_move = None;
+        let mut a = alpha;
 
         for (i, m) in legal_moves.into_iter().enumerate() {
             let mut new_pos = pos.clone();
@@ -354,7 +396,7 @@ impl PvsSearcher {
 
             let (score, child_node) = if i == 0 {
                 let (s, cn) =
-                    self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                    self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
                 (-s, cn)
             } else {
                 let mut reduction = 0;
@@ -368,23 +410,23 @@ impl PvsSearcher {
                     reduction = reduction.min(depth - 1);
                 }
 
-                let (zw_score, child_node) = self.alpha_beta(
+                let (zw_score, child_node) = self.pvs_search(
                     &mut new_pos,
                     depth - 1 - reduction,
                     ply + 1,
-                    -alpha - 1,
-                    -alpha,
+                    -a - 1,
+                    -a,
                     config,
                 );
                 let zw_score = -zw_score;
 
-                if zw_score > alpha && reduction > 0 {
+                if zw_score > a && reduction > 0 {
                     let (s, cn) =
-                        self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -alpha - 1, -alpha, config);
+                        self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
                     (-s, cn)
-                } else if zw_score > alpha && zw_score < beta {
+                } else if zw_score > a && zw_score < beta {
                     let (s, cn) =
-                        self.alpha_beta(&mut new_pos, depth - 1, ply + 1, -beta, -alpha, config);
+                        self.pvs_search(&mut new_pos, depth - 1, ply + 1, -beta, -a, config);
                     (-s, cn)
                 } else {
                     (zw_score, child_node)
@@ -402,11 +444,23 @@ impl PvsSearcher {
                     self.killer_moves[ply as usize][1] = self.killer_moves[ply as usize][0];
                     self.killer_moves[ply as usize][0] = Some(m);
                 }
+                if config.use_transposition_table {
+                    let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
+                    let entry = tt::TTEntry {
+                        hash,
+                        depth,
+                        score: beta,
+                        bound: tt::Bound::Lower,
+                        best_move: Some(m),
+                    };
+                    self.transposition_table.lock().unwrap().store(entry);
+                }
                 current_node.score = beta;
                 return (beta, current_node);
             }
-            if score > alpha {
-                alpha = score;
+            if score > a {
+                a = score;
+                best_move = Some(m);
                 if config.use_history_heuristic {
                     if let Some(from_sq) = m.from() {
                         let piece_index = self.get_piece_index(pos.board().piece_at(from_sq).unwrap());
@@ -415,8 +469,28 @@ impl PvsSearcher {
                 }
             }
         }
-        current_node.score = alpha;
-        (alpha, current_node)
+
+        if config.use_transposition_table {
+            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
+            let bound = if a > alpha {
+                tt::Bound::Exact
+            } else if a >= beta {
+                tt::Bound::Lower
+            } else {
+                tt::Bound::Upper
+            };
+            let entry = tt::TTEntry {
+                hash,
+                depth,
+                score: a,
+                bound,
+                best_move,
+            };
+            self.transposition_table.lock().unwrap().store(entry);
+        }
+
+        current_node.score = a;
+        (a, current_node)
     }
 
     fn get_piece_index(&self, piece: Piece) -> usize {
@@ -425,15 +499,18 @@ impl PvsSearcher {
         (piece.color as usize * 6) + (piece.role as usize - 1)
     }
 
-    fn order_moves(&self, moves: &mut [Move], pos: &Chess, ply: u8, config: &SearchConfig) {
+    fn order_moves(&self, moves: &mut [Move], pos: &Chess, ply: u8, config: &SearchConfig, tt_move: Option<Move>) {
         moves.sort_unstable_by(|a, b| {
-            let a_score = self.score_move(a, pos, ply, config);
-            let b_score = self.score_move(b, pos, ply, config);
+            let a_score = self.score_move(a, pos, ply, config, tt_move);
+            let b_score = self.score_move(b, pos, ply, config, tt_move);
             b_score.cmp(&a_score)
         });
     }
 
-    fn score_move(&self, m: &Move, pos: &Chess, ply: u8, config: &SearchConfig) -> i32 {
+    fn score_move(&self, m: &Move, pos: &Chess, ply: u8, config: &SearchConfig, tt_move: Option<Move>) -> i32 {
+        if tt_move == Some(*m) {
+            return 2_000_000;
+        }
         if m.is_capture() {
             return 1_000_000; // High score for captures to search them first
         }
@@ -455,25 +532,3 @@ impl PvsSearcher {
     }
 }
 
-use mcts::MctsSearcher;
-pub fn search(
-    pos: &Chess,
-    depth: u8,
-    config: &SearchConfig,
-    workers: Option<Arc<Mutex<Vec<Worker>>>>,
-    update_sender: Option<Sender<EvolutionUpdate>>,
-) -> (Option<Move>, i32, Option<MoveTreeNode>) {
-    match config.search_algorithm {
-        SearchAlgorithm::Pvs => {
-            let mut searcher = PvsSearcher {
-                history_table: [[0; 64]; 12],
-                killer_moves: [[None; 2]; 64],
-            };
-            searcher.search(pos, depth, config, workers, update_sender)
-        }
-        SearchAlgorithm::Mcts => {
-            let mut searcher = MctsSearcher::new();
-            searcher.search(pos, depth, config, workers, update_sender)
-        }
-    }
-}

@@ -4,6 +4,7 @@ mod game;
 mod ga;
 
 use crate::app::{App, TuiMakeWriter};
+use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -12,7 +13,7 @@ use crossterm::{
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use std::{error::Error, io};
 use tracing_subscriber::{fmt, prelude::*};
-use clap::Parser;
+
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
