@@ -140,17 +140,17 @@ impl EvolutionManager {
 
         // 1. Selection: Find the top 5 individuals
         let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
-        sorted_individuals.sort_by_key(|i| i.wins);
-        sorted_individuals.reverse(); // Highest wins first
+        sorted_individuals.sort_by_key(|i| i.score);
+        sorted_individuals.reverse(); // Highest score first
         let elites = &sorted_individuals[0..5];
 
-        self.send_status("Top 5 Elites (by wins):".to_string())?;
+        self.send_status("Top 5 Elites (by score):".to_string())?;
         for (i, elite) in elites.iter().enumerate() {
             self.send_status(format!(
-                "{}. Individual {} (Wins: {})",
+                "{}. Individual {} (Score: {})",
                 i + 1,
                 elite.id,
-                elite.wins
+                elite.score
             ))?;
         }
 
@@ -220,18 +220,17 @@ impl EvolutionManager {
 
             match result {
                 GameResult::WhiteWin => {
-                    population.individuals[white_id].wins += 1;
-                    population.individuals[black_id].losses += 1;
+                    population.individuals[white_id].score += 1;
+                    population.individuals[black_id].score -= 1;
                     current_match.result = "1-0".to_string();
                 }
                 GameResult::BlackWin => {
-                    population.individuals[white_id].losses += 1;
-                    population.individuals[black_id].wins += 1;
+                    population.individuals[white_id].score -= 1;
+                    population.individuals[black_id].score += 1;
                     current_match.result = "0-1".to_string();
                 }
                 GameResult::Draw => {
-                    population.individuals[white_id].draws += 1;
-                    population.individuals[black_id].draws += 1;
+                    // No change in score for a draw
                     current_match.result = "1/2-1/2".to_string();
                 }
             }
@@ -247,8 +246,8 @@ impl EvolutionManager {
         self.send_status("\nTournament Results:".to_string())?;
         for individual in &population.individuals {
             self.send_status(format!(
-                "Individual {}: Wins={}, Losses={}, Draws={}",
-                individual.id, individual.wins, individual.losses, individual.draws
+                "Individual {}: Score={}",
+                individual.id, individual.score
             ))?;
         }
         Ok(())
@@ -361,9 +360,7 @@ fn calculate_material_difference(pos: &Chess) -> i32 {
 pub struct Individual {
     pub id: usize,
     pub config: SearchConfig,
-    pub wins: u32,
-    pub losses: u32,
-    pub draws: u32,
+    pub score: i32,
 }
 
 /// Represents a collection of individuals for a single generation.
@@ -383,9 +380,7 @@ impl Population {
             individuals.push(Individual {
                 id: i,
                 config,
-                wins: 0,
-                losses: 0,
-                draws: 0,
+                score: 0,
             });
         }
         Self { individuals }
