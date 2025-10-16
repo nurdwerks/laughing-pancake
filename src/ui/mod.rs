@@ -180,9 +180,9 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, user_input
 
             let fg_color = if let Some(p) = piece {
                 if p.color == shakmaty::Color::White {
-                    Color::White
+                    Color::Cyan
                 } else {
-                    Color::Black
+                    Color::Blue
                 }
             } else {
                 bg_color
