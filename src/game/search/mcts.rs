@@ -1,187 +1,29 @@
 // src/game/search/mcts.rs
 
-use crate::game::search::{SearchConfig, Searcher};
-use shakmaty::{Chess, Move, Position, Outcome, KnownOutcome};
-use std::collections::HashMap;
-use rand::seq::SliceRandom;
+use crate::game::evaluation;
+use crate::game::search::{MoveTreeNode, SearchConfig, Searcher};
+use crossbeam_channel::Sender;
+use crossbeam_utils::thread;
+use num_cpus;
+use shakmaty::{Chess, Move, Position};
+use std::sync::{Arc, Mutex};
+use crate::app::Worker;
+use crate::ga::EvolutionUpdate;
+use std::any::Any;
 
-const UCT_EXPLORATION_CONSTANT: f64 = std::f64::consts::SQRT_2;
+pub struct MctsSearcher;
 
-#[derive(Clone, Debug)]
-struct Node {
-    visits: u32,
-    wins: f64,
-    parent: Option<usize>,
-    children: HashMap<Move, usize>,
-}
-
-impl Node {
-    fn new(parent: Option<usize>) -> Self {
-        Self {
-            visits: 0,
-            wins: 0.0,
-            parent,
-            children: HashMap::new(),
-        }
+impl Default for MctsSearcher {
+    fn default() -> Self {
+        Self::new()
     }
-}
-
-pub struct MctsSearcher {
-    tree: Vec<Node>,
 }
 
 impl MctsSearcher {
     pub fn new() -> Self {
-        Self {
-            tree: vec![Node::new(None)], // Start with a root node
-        }
-    }
-
-    fn select(&self, node_index: usize, pos: &Chess) -> (usize, Chess) {
-        let mut current_node_index = node_index;
-        let mut current_pos = pos.clone();
-
-        loop {
-            let node = &self.tree[current_node_index];
-            if node.children.is_empty() || current_pos.is_game_over() {
-                return (current_node_index, current_pos);
-            }
-
-            let best_child = node.children.iter().max_by(|(_, a_idx), (_, b_idx)| {
-                self.uct_value(current_node_index, **a_idx)
-                    .partial_cmp(&self.uct_value(current_node_index, **b_idx))
-                    .unwrap()
-            });
-
-            if let Some((best_move, best_child_index)) = best_child {
-                current_pos.play_unchecked(*best_move);
-                current_node_index = *best_child_index;
-            } else {
-                return (current_node_index, current_pos);
-            }
-        }
-    }
-
-    fn expand(&mut self, node_index: usize, pos: &Chess) {
-        if pos.is_game_over() {
-            return;
-        }
-
-        let legal_moves = pos.legal_moves();
-        for m in legal_moves {
-            let new_node = Node::new(Some(node_index));
-            let new_node_index = self.tree.len();
-            self.tree.push(new_node);
-            self.tree[node_index].children.insert(m, new_node_index);
-        }
-    }
-
-    fn score_to_win_probability(score: i32) -> f64 {
-        // A simple sigmoid function to map the score to a win probability.
-        // The scaling factor K can be tuned. A smaller K makes the function steeper.
-        // A value of 400 is often used, as it corresponds to the Elo difference
-        // where the win probability is about 90%.
-        const K: f64 = 400.0;
-        1.0 / (1.0 + 10.0f64.powf(-score as f64 / K))
-    }
-
-    fn simulate(&self, pos: &Chess, config: &SearchConfig) -> f64 {
-        let mut sim_pos = pos.clone();
-        let original_turn = sim_pos.turn();
-
-        const SIMULATION_DEPTH: u8 = 5; // Limit the simulation depth
-
-        for _ in 0..SIMULATION_DEPTH {
-            if sim_pos.is_game_over() {
-                break;
-            }
-            let moves = sim_pos.legal_moves();
-            let move_to_play = moves.choose(&mut rand::thread_rng());
-
-            if let Some(m) = move_to_play {
-                sim_pos.play_unchecked(*m);
-            } else {
-                break;
-            }
-        }
-
-        // If the game ended during simulation, return the actual result
-        if sim_pos.is_game_over() {
-            return match sim_pos.outcome() {
-                Outcome::Known(KnownOutcome::Decisive { winner, .. }) => {
-                    if winner == original_turn { 1.0 } else { 0.0 }
-                }
-                _ => 0.5, // Draw or other known outcomes
-            };
-        }
-
-        // Otherwise, use the evaluation function
-        let score = crate::game::evaluation::evaluate(&sim_pos, config);
-        let perspective_score = if sim_pos.turn() == original_turn { score } else { -score };
-        Self::score_to_win_probability(perspective_score)
-    }
-
-    fn backpropagate(&mut self, start_node_index: usize, mut result: f64) {
-        let mut current_index = Some(start_node_index);
-        while let Some(index) = current_index {
-            self.tree[index].visits += 1;
-            self.tree[index].wins += result;
-            result = 1.0 - result; // Alternate result for the parent
-            current_index = self.tree[index].parent;
-        }
-    }
-
-    fn uct_value(&self, parent_index: usize, child_index: usize) -> f64 {
-        let parent_node = &self.tree[parent_index];
-        let child_node = &self.tree[child_index];
-
-        if child_node.visits == 0 {
-            return f64::INFINITY;
-        }
-
-        let exploitation = child_node.wins / child_node.visits as f64;
-        let exploration = UCT_EXPLORATION_CONSTANT * ((parent_node.visits as f64).ln() / child_node.visits as f64).sqrt();
-
-        exploitation + exploration
-    }
-
-    fn best_move(&self) -> Option<Move> {
-        let root = &self.tree[0];
-        root.children
-            .iter()
-            .max_by_key(|(_, &child_index)| self.tree[child_index].visits)
-            .map(|(m, _)| *m)
-    }
-
-    fn build_move_tree_recursive(&self, node_index: usize, pos: &Chess, san: String) -> MoveTreeNode {
-        let node = &self.tree[node_index];
-        let mut children = Vec::new();
-
-        for (m, &child_index) in &node.children {
-            let original_pos = pos.clone();
-            if let Ok(new_pos) = pos.clone().play(*m) {
-                let child_san = shakmaty::san::SanPlus::from_move(original_pos, *m).to_string();
-                let child_node = self.build_move_tree_recursive(child_index, &new_pos, child_san);
-                children.push(child_node);
-            }
-        }
-
-        MoveTreeNode {
-            move_san: san,
-            score: (node.wins / node.visits.max(1) as f64 * 100.0) as i32,
-            children,
-        }
+        Self
     }
 }
-
-use super::MoveTreeNode;
-use crate::app::Worker;
-use crate::ga::EvolutionUpdate;
-use crossbeam_channel::Sender;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use crossbeam_utils::thread;
-use num_cpus;
 
 impl Searcher for MctsSearcher {
     fn search(
@@ -189,78 +31,203 @@ impl Searcher for MctsSearcher {
         pos: &Chess,
         _depth: u8,
         config: &SearchConfig,
-        workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<EvolutionUpdate>>,
+        _workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        _update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+        let (best_move, score, final_tree) = self.mcts(pos, config.mcts_simulations, config);
+        (best_move, score, Some(final_tree))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl MctsSearcher {
+    fn mcts(
+        &self,
+        pos: &Chess,
+        simulations: u32,
+        config: &SearchConfig,
+    ) -> (Option<Move>, i32, MoveTreeNode) {
+        if pos.is_game_over() {
+            let score = evaluation::evaluate(pos, config);
+            return (
+                None,
+                score,
+                MoveTreeNode {
+                    move_san: "root".to_string(),
+                    score,
+                    children: vec![],
+                },
+            );
+        }
+
+        let root = Node::new(pos.clone(), None);
+        let root_mutex = Arc::new(Mutex::new(root));
+
         let num_threads = num_cpus::get();
-        let simulations_per_thread = (config.mcts_simulations as usize / num_threads).max(1);
-        let (tx, rx) = std::sync::mpsc::channel();
+        let simulations_per_thread = simulations / num_threads as u32;
 
         thread::scope(|s| {
-            for i in 0..num_threads {
-                let pos = pos.clone();
-                let workers = workers.clone();
-                let update_sender = update_sender.clone();
-                let tx = tx.clone();
-
+            for _ in 0..num_threads {
+                let root_clone = Arc::clone(&root_mutex);
+                let config_clone = config.clone();
                 s.spawn(move |_| {
-                    let worker_id = rand::random::<u64>();
-                    let worker_name = format!("MCTS-{i}");
-
-                    if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{worker_id:x}] starting: {worker_name}")));
-                    }
-
-                    if let Some(w) = &workers {
-                        let mut worker_list = w.lock().unwrap();
-                        worker_list.push(Worker { id: worker_id, name: worker_name.clone(), start_time: Instant::now() });
-                    }
-
-                    let mut local_searcher = MctsSearcher::new();
-
                     for _ in 0..simulations_per_thread {
-                        let (leaf_index, leaf_pos) = local_searcher.select(0, &pos);
-                        local_searcher.expand(leaf_index, &leaf_pos);
-                        let result = local_searcher.simulate(&leaf_pos, config);
-                        local_searcher.backpropagate(leaf_index, result);
-                    }
+                        let mut root_guard = root_clone.lock().unwrap();
+                        let mut path_indices = Vec::new();
 
-                    tx.send(local_searcher.tree).unwrap();
+                        // Selection
+                        let mut current_node = &*root_guard;
+                        while !current_node.is_leaf() {
+                             let best_child_idx = current_node
+                                .children
+                                .iter()
+                                .enumerate()
+                                .max_by(|(_, a), (_, b)| {
+                                    let a_ucb1 = a.ucb1(current_node.visits);
+                                    let b_ucb1 = b.ucb1(current_node.visits);
+                                    a_ucb1.partial_cmp(&b_ucb1).unwrap()
+                                })
+                                .map(|(i, _)| i)
+                                .unwrap();
+                            path_indices.push(best_child_idx);
+                            current_node = &current_node.children[best_child_idx];
+                        }
 
-                    if let Some(w) = &workers {
-                        let mut worker_list = w.lock().unwrap();
-                        worker_list.retain(|worker| worker.id != worker_id);
-                    }
+                        // Expansion
+                        let mut leaf_node = &mut *root_guard;
+                        for &idx in &path_indices {
+                            leaf_node = &mut leaf_node.children[idx];
+                        }
 
-                    if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{worker_id:x}] finished.")));
+                        if leaf_node.visits > 0 {
+                            leaf_node.expand();
+                        }
+
+                        let mut node_to_sim = leaf_node;
+                        if !node_to_sim.children.is_empty() {
+                            let random_child_idx = rand::random::<usize>() % node_to_sim.children.len();
+                            path_indices.push(random_child_idx);
+                            node_to_sim = &mut node_to_sim.children[random_child_idx];
+                        }
+
+
+                        // Simulation
+                        let mut sim_pos = node_to_sim.pos.clone();
+                        let mut sim_depth = 0;
+                        while !sim_pos.is_game_over() && sim_depth < 10 {
+                            let moves = sim_pos.legal_moves();
+                            if moves.is_empty() { break; }
+                            if let Some(m) = moves.get(rand::random::<usize>() % moves.len()) {
+                                sim_pos.play_unchecked(*m);
+                            } else {
+                                break;
+                            }
+                            sim_depth += 1;
+                        }
+
+                        let eval_score = evaluation::evaluate(&sim_pos, &config_clone);
+                        let win_prob = 1.0 / (1.0 + (-(eval_score as f64) / 400.0).exp());
+
+                        // Backpropagation
+                        let mut node_to_update = &mut *root_guard;
+                        node_to_update.visits += 1;
+                        node_to_update.wins += win_prob;
+                        for &idx in &path_indices {
+                            node_to_update = &mut node_to_update.children[idx];
+                            node_to_update.visits += 1;
+                            node_to_update.wins += win_prob;
+                        }
                     }
                 });
             }
-        }).unwrap();
+        })
+        .unwrap();
 
-        drop(tx);
+        let root = Arc::try_unwrap(root_mutex).unwrap().into_inner().unwrap();
 
-        for remote_tree in rx.iter() {
-            for (i, node) in remote_tree.iter().enumerate() {
-                if i >= self.tree.len() {
-                    self.tree.push(node.clone());
-                } else {
-                    self.tree[i].visits += node.visits;
-                    self.tree[i].wins += node.wins;
-                    for (m, child_index) in &node.children {
-                        if !self.tree[i].children.contains_key(m) {
-                            self.tree[i].children.insert(*m, *child_index);
-                        }
-                    }
-                }
-            }
+        let best_child = root
+            .children
+            .iter()
+            .max_by(|a, b| a.visits.cmp(&b.visits));
+
+        if best_child.is_none() {
+             return (
+                None,
+                0,
+                MoveTreeNode {
+                    move_san: "root".to_string(),
+                    score: 0,
+                    children: vec![],
+                },
+            );
         }
+        let best_child = best_child.unwrap();
 
-        (
-            self.best_move(),
-            0,
-            Some(self.build_move_tree_recursive(0, pos, "root".to_string())),
-        )
+
+        let best_move = best_child.parent_move.unwrap();
+        let final_tree = root.to_move_tree_node();
+        let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
+
+        (Some(best_move), score, final_tree)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Node {
+    pos: Chess,
+    parent_move: Option<Move>,
+    visits: u32,
+    wins: f64,
+    children: Vec<Node>,
+}
+
+impl Node {
+    fn new(pos: Chess, parent_move: Option<Move>) -> Self {
+        Self {
+            pos,
+            parent_move,
+            visits: 0,
+            wins: 0.0,
+            children: Vec::new(),
+        }
+    }
+
+    fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    fn expand(&mut self) {
+        for m in self.pos.legal_moves() {
+            let mut new_pos = self.pos.clone();
+            new_pos.play_unchecked(m);
+            self.children.push(Node::new(new_pos, Some(m)));
+        }
+    }
+
+    fn ucb1(&self, parent_visits: u32) -> f64 {
+        if self.visits == 0 {
+            f64::INFINITY
+        } else {
+            (self.wins / self.visits as f64)
+                + (2.0f64.ln() * parent_visits as f64 / self.visits as f64).sqrt()
+        }
+    }
+
+    fn to_move_tree_node(&self) -> MoveTreeNode {
+        MoveTreeNode {
+            move_san: self
+                .parent_move
+                .map(|m| shakmaty::san::SanPlus::from_move(self.pos.clone(), m).to_string())
+                .unwrap_or_else(|| "root".to_string()),
+            score: if self.visits > 0 { (self.wins / self.visits as f64 * 100.0) as i32 } else { 0 },
+            children: self
+                .children
+                .iter()
+                .map(|c| c.to_move_tree_node())
+                .collect(),
+        }
     }
 }

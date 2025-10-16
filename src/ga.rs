@@ -8,7 +8,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
-use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher};
+use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
@@ -240,6 +240,7 @@ impl EvolutionManager {
             save_generation(generation);
             self.update_sender.send(EvolutionUpdate::MatchCompleted(generation.matches[i].clone())).map_err(|_| ())?;
             self.send_status(format!("Finished game {}/{}. Progress saved.", i + 1, total_matches))?;
+            self.send_status("Player cache saved.".to_string())?;
         }
 
         // Print final tournament results
@@ -258,17 +259,37 @@ impl EvolutionManager {
         let mut pos = Chess::default();
         let mut sans = Vec::new();
 
+        let white_searcher_pvs;
+        let black_searcher_pvs;
+
         let mut white_searcher: Box<dyn Searcher> = if white_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::new())
+            let cache_path = PathBuf::from(".").join("player_cache.json");
+            let cache = if cache_path.exists() {
+                let json = fs::read_to_string(&cache_path).unwrap_or_default();
+                serde_json::from_str(&json).unwrap_or_else(|_| EvaluationCache::new())
+            } else {
+                EvaluationCache::new()
+            };
+            white_searcher_pvs = PvsSearcher::with_cache(cache);
+            Box::new(white_searcher_pvs.clone())
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
 
         let mut black_searcher: Box<dyn Searcher> = if black_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::new())
+            let cache_path = PathBuf::from(".").join("player_cache.json");
+            let cache = if cache_path.exists() {
+                let json = fs::read_to_string(&cache_path).unwrap_or_default();
+                serde_json::from_str(&json).unwrap_or_else(|_| EvaluationCache::new())
+            } else {
+                EvaluationCache::new()
+            };
+            black_searcher_pvs = PvsSearcher::with_cache(cache);
+            Box::new(black_searcher_pvs.clone())
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
+
 
         let mut game_result_override = None;
         while !pos.is_game_over() {
@@ -336,6 +357,14 @@ impl EvolutionManager {
                 pgn.push_str(&format!("{}. ", i / 2 + 1));
             }
             pgn.push_str(&format!("{san} "));
+        }
+
+        if let Some(pvs_searcher) = white_searcher.as_any().downcast_ref::<PvsSearcher>() {
+            let cache = pvs_searcher.get_cache();
+            let cache_lock = cache.lock().unwrap();
+            let cache_path = PathBuf::from(".").join("player_cache.json");
+            let json = serde_json::to_string_pretty(cache_lock.get_table()).expect("Failed to serialize cache");
+            fs::write(cache_path, json).expect("Failed to write cache file");
         }
 
         Ok((result, pgn))
