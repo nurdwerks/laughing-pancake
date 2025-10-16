@@ -270,7 +270,14 @@ impl EvolutionManager {
             Box::new(search::mcts::MctsSearcher::new())
         };
 
+        let mut game_result_override = None;
         while !pos.is_game_over() {
+            // End the game in a draw after 60 moves (120 half-moves/plies).
+            if sans.len() >= 120 {
+                game_result_override = Some(GameResult::Draw);
+                break;
+            }
+
             let (config, searcher) = if pos.turn().is_white() {
                 (white_config.clone(), &mut white_searcher)
             } else {
@@ -312,11 +319,15 @@ impl EvolutionManager {
             }).unwrap();
         }
 
-        let outcome = pos.outcome();
-        let result = match outcome.winner() {
-            Some(shakmaty::Color::White) => GameResult::WhiteWin,
-            Some(shakmaty::Color::Black) => GameResult::BlackWin,
-            None => GameResult::Draw,
+        let result = if let Some(res) = game_result_override {
+            res
+        } else {
+            let outcome = pos.outcome();
+            match outcome.winner() {
+                Some(shakmaty::Color::White) => GameResult::WhiteWin,
+                Some(shakmaty::Color::Black) => GameResult::BlackWin,
+                None => GameResult::Draw,
+            }
         };
 
         let mut pgn = String::new();
