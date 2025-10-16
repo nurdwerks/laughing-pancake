@@ -432,7 +432,7 @@ fn parse_id_from_name(name: &str) -> usize {
 fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
     SearchConfig {
         search_depth: if rng.gen_bool(0.5) { p1.search_depth } else { p2.search_depth },
-        search_algorithm: if rng.gen_bool(0.5) { p1.search_algorithm.clone() } else { p2.search_algorithm.clone() },
+        search_algorithm: SearchAlgorithm::Pvs,
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
         use_killer_moves: if rng.gen_bool(0.5) { p1.use_killer_moves } else { p2.use_killer_moves },
@@ -623,7 +623,7 @@ fn generate_initial_population(generation_dir: &Path) {
         config.use_delta_pruning = rng.gen_bool(0.5);
 
         // Randomize enum
-        config.search_algorithm = if rng.gen_bool(0.5) { SearchAlgorithm::Pvs } else { SearchAlgorithm::Mcts };
+        config.search_algorithm = SearchAlgorithm::Pvs;
 
         // Randomize numeric values with +/- 50% variance
         config.mcts_simulations = vary_numeric(default_config.mcts_simulations as i32, &mut rng) as u32;
