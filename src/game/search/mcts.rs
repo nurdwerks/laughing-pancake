@@ -76,33 +76,49 @@ impl MctsSearcher {
         }
     }
 
-    fn simulate(&self, pos: &Chess) -> f64 {
+    fn score_to_win_probability(score: i32) -> f64 {
+        // A simple sigmoid function to map the score to a win probability.
+        // The scaling factor K can be tuned. A smaller K makes the function steeper.
+        // A value of 400 is often used, as it corresponds to the Elo difference
+        // where the win probability is about 90%.
+        const K: f64 = 400.0;
+        1.0 / (1.0 + 10.0f64.powf(-score as f64 / K))
+    }
+
+    fn simulate(&self, pos: &Chess, config: &SearchConfig) -> f64 {
         let mut sim_pos = pos.clone();
         let original_turn = sim_pos.turn();
 
-        while !sim_pos.is_game_over() {
+        const SIMULATION_DEPTH: u8 = 5; // Limit the simulation depth
+
+        for _ in 0..SIMULATION_DEPTH {
+            if sim_pos.is_game_over() {
+                break;
+            }
             let moves = sim_pos.legal_moves();
+            let move_to_play = moves.choose(&mut rand::thread_rng());
 
-            let capture_moves: Vec<Move> = moves.iter().filter(|m| m.is_capture()).cloned().collect();
-
-            let move_to_play = if !capture_moves.is_empty() {
-                *capture_moves.choose(&mut rand::thread_rng()).unwrap()
-            } else if let Some(m) = moves.choose(&mut rand::thread_rng()){
-                *m
+            if let Some(m) = move_to_play {
+                sim_pos.play_unchecked(*m);
             } else {
                 break;
-            };
-
-            sim_pos.play_unchecked(move_to_play);
-        }
-
-        match sim_pos.outcome() {
-            Outcome::Known(KnownOutcome::Decisive { winner, .. }) => {
-                if winner == original_turn { 1.0 } else { 0.0 }
             }
-            Outcome::Known(KnownOutcome::Draw) => 0.5,
-            _ => 0.5,
         }
+
+        // If the game ended during simulation, return the actual result
+        if sim_pos.is_game_over() {
+            return match sim_pos.outcome() {
+                Outcome::Known(KnownOutcome::Decisive { winner, .. }) => {
+                    if winner == original_turn { 1.0 } else { 0.0 }
+                }
+                _ => 0.5, // Draw or other known outcomes
+            };
+        }
+
+        // Otherwise, use the evaluation function
+        let score = crate::game::evaluation::evaluate(&sim_pos, config);
+        let perspective_score = if sim_pos.turn() == original_turn { score } else { -score };
+        Self::score_to_win_probability(perspective_score)
     }
 
     fn backpropagate(&mut self, start_node_index: usize, mut result: f64) {
@@ -205,7 +221,7 @@ impl Searcher for MctsSearcher {
                     for _ in 0..simulations_per_thread {
                         let (leaf_index, leaf_pos) = local_searcher.select(0, &pos);
                         local_searcher.expand(leaf_index, &leaf_pos);
-                        let result = local_searcher.simulate(&leaf_pos);
+                        let result = local_searcher.simulate(&leaf_pos, &config);
                         local_searcher.backpropagate(leaf_index, result);
                     }
 
