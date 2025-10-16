@@ -2,17 +2,20 @@
 
 use crate::game::evaluation;
 use crate::game::evaluation::see;
-use crate::game::search::{MoveTreeNode, SearchConfig, Searcher};
+use crate::game::search::{MoveTreeNode, SearchConfig, Searcher, MctsCache, MctsNodeData};
 use crossbeam_channel::Sender;
 use crossbeam_utils::thread;
 use num_cpus;
-use shakmaty::{Chess, Move, Position};
+use shakmaty::{Chess, Move, Position, EnPassantMode};
+use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
 use crate::app::Worker;
 use crate::ga::EvolutionUpdate;
 use std::any::Any;
 
-pub struct MctsSearcher;
+pub struct MctsSearcher {
+    mcts_cache: Arc<Mutex<MctsCache>>,
+}
 
 impl Default for MctsSearcher {
     fn default() -> Self {
@@ -22,7 +25,13 @@ impl Default for MctsSearcher {
 
 impl MctsSearcher {
     pub fn new() -> Self {
-        Self
+        Self {
+            mcts_cache: Arc::new(Mutex::new(MctsCache::new())),
+        }
+    }
+
+    pub fn with_shared_cache(cache: Arc<Mutex<MctsCache>>) -> Self {
+        Self { mcts_cache: cache }
     }
 }
 
@@ -64,7 +73,7 @@ impl MctsSearcher {
             );
         }
 
-        let root = Node::new(pos.clone(), None);
+        let root = Node::new(pos.clone(), None, Arc::clone(&self.mcts_cache));
         let root_mutex = Arc::new(Mutex::new(root));
 
         let num_threads = num_cpus::get();
@@ -74,6 +83,7 @@ impl MctsSearcher {
             for _ in 0..num_threads {
                 let root_clone = Arc::clone(&root_mutex);
                 let config_clone = config.clone();
+
                 s.spawn(move |_| {
                     for _ in 0..simulations_per_thread {
                         let mut root_guard = root_clone.lock().unwrap();
@@ -172,6 +182,8 @@ impl MctsSearcher {
         let final_tree = root.to_move_tree_node();
         let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
 
+        root.update_cache();
+
         (Some(best_move), score, final_tree)
     }
 }
@@ -183,16 +195,28 @@ struct Node {
     visits: u32,
     wins: f64,
     children: Vec<Node>,
+    mcts_cache: Arc<Mutex<MctsCache>>,
 }
 
 impl Node {
-    fn new(pos: Chess, parent_move: Option<Move>) -> Self {
+    fn new(pos: Chess, parent_move: Option<Move>, mcts_cache: Arc<Mutex<MctsCache>>) -> Self {
+        let hash = pos.zobrist_hash::<crate::game::search::evaluation_cache::Zobrist64>(EnPassantMode::Legal);
+        let (visits, wins) = {
+            let cache = mcts_cache.lock().unwrap();
+            if let Some(data) = cache.probe(&hash) {
+                (data.visits, data.wins)
+            } else {
+                (0, 0.0)
+            }
+        };
+
         Self {
             pos,
             parent_move,
-            visits: 0,
-            wins: 0.0,
+            visits,
+            wins,
             children: Vec::new(),
+            mcts_cache,
         }
     }
 
@@ -201,6 +225,9 @@ impl Node {
     }
 
     fn expand(&mut self) {
+        if !self.children.is_empty() {
+            return;
+        }
         for m in self.pos.legal_moves() {
             if m.is_capture() {
                 if let Some(from) = m.from() {
@@ -211,7 +238,7 @@ impl Node {
             }
             let mut new_pos = self.pos.clone();
             new_pos.play_unchecked(m);
-            self.children.push(Node::new(new_pos, Some(m)));
+            self.children.push(Node::new(new_pos, Some(m), Arc::clone(&self.mcts_cache)));
         }
     }
 
@@ -236,6 +263,15 @@ impl Node {
                 .iter()
                 .map(|c| c.to_move_tree_node())
                 .collect(),
+        }
+    }
+
+    fn update_cache(&self) {
+        let mut cache = self.mcts_cache.lock().unwrap();
+        let hash = self.pos.zobrist_hash::<crate::game::search::evaluation_cache::Zobrist64>(EnPassantMode::Legal);
+        cache.store(hash, MctsNodeData { visits: self.visits, wins: self.wins });
+        for child in &self.children {
+            child.update_cache();
         }
     }
 }

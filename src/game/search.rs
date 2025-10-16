@@ -2,6 +2,7 @@
 
 pub mod mcts;
 pub mod evaluation_cache;
+pub mod mcts_cache;
 
 use shakmaty::{Chess, Move, Position, Piece, san::SanPlus, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
@@ -9,6 +10,7 @@ use crate::game::evaluation;
 use crossbeam_utils::thread;
 use num_cpus;
 use evaluation_cache::EvaluationCache;
+pub use mcts_cache::{MctsCache, MctsNodeData};
 
 const MATE_SCORE: i32 = 1_000_000;
 

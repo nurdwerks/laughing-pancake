@@ -272,7 +272,7 @@ impl EvolutionManager {
             .collect();
         let total_matches = generation.matches.len();
         let skipped_matches = total_matches - matches_to_play.len();
-        self.send_status(format!("Skipping {} already completed games.", skipped_matches))?;
+        self.send_status(format!("Skipping {skipped_matches} already completed games."))?;
         self.update_sender.send(EvolutionUpdate::TournamentStart(total_matches, skipped_matches)).map_err(|_| ())?;
 
         let (results_tx, results_rx) = unbounded();
