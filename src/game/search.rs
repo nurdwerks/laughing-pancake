@@ -199,10 +199,6 @@ impl PvsSearcher {
 
                     let worker_display_name = format!("PVS: {}", worker_name);
 
-                    if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] starting: {}", worker_id, worker_display_name)));
-                    }
-
                     if let Some(w) = &workers {
                         let mut worker_list = w.lock().unwrap();
                         worker_list.push(Worker {
@@ -235,10 +231,6 @@ impl PvsSearcher {
                     if let Some(w) = &workers {
                         let mut worker_list = w.lock().unwrap();
                         worker_list.retain(|worker| worker.id != worker_id);
-                    }
-
-                    if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] finished.", worker_id)));
                     }
                 });
             }
