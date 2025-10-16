@@ -37,21 +37,17 @@ fn count_isolated_pawns(our_pawns: Bitboard) -> i32 {
     for pawn_square in our_pawns {
         let file_index = pawn_square.file() as usize;
         let mut has_friendly_pawn_on_adjacent_file = false;
-        if file_index > 0 {
-            if !(our_pawns & Bitboard::from_file(File::new((file_index - 1) as u32))).is_empty() {
-                has_friendly_pawn_on_adjacent_file = true;
-            }
+        if file_index > 0 && !(our_pawns & Bitboard::from_file(File::new((file_index - 1) as u32))).is_empty() {
+            has_friendly_pawn_on_adjacent_file = true;
         }
-        if file_index < 7 {
-            if !(our_pawns & Bitboard::from_file(File::new((file_index + 1) as u32))).is_empty() {
-                has_friendly_pawn_on_adjacent_file = true;
-            }
+        if file_index < 7 && !(our_pawns & Bitboard::from_file(File::new((file_index + 1) as u32))).is_empty() {
+            has_friendly_pawn_on_adjacent_file = true;
         }
         if !has_friendly_pawn_on_adjacent_file {
             isolated_pawns += 1;
         }
     }
-    isolated_pawns as i32
+    isolated_pawns
 }
 
 fn count_passed_pawns(color: Color, our_pawns: Bitboard, their_pawns: Bitboard) -> i32 {
@@ -87,5 +83,5 @@ fn count_passed_pawns(color: Color, our_pawns: Bitboard, their_pawns: Bitboard) 
             passed_pawns += 1;
         }
     }
-    passed_pawns as i32
+    passed_pawns
 }

@@ -3,15 +3,16 @@ mod ui;
 mod game;
 mod ga;
 
-use crate::app::App;
+use crate::app::{App, TuiMakeWriter};
 use clap::Parser;
 use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::prelude::CrosstermBackend;
-use std::error::Error;
-use tracing_subscriber::prelude::*;
+use ratatui::{prelude::CrosstermBackend, Terminal};
+use std::{error::Error, io};
+use tracing_subscriber::{fmt, prelude::*};
 
 
 #[derive(Parser, Debug)]
@@ -40,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::panic::set_hook(Box::new(|info| {
         let payload = info.payload().downcast_ref::<&str>().unwrap_or(&"");
         let location = info.location().unwrap();
-        let msg = format!("panic occurred: {}, location: {}", payload, location);
+        let msg = format!("panic occurred: {payload}, location: {location}");
         tracing::error!("{}", msg);
     }));
 
@@ -68,7 +69,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Err(err) = res {
         println!("{err:?}");
     } else if let Some(err) = app.error_message {
-        println!("Application exited with an error: {}", err);
+        println!("Application exited with an error: {err}");
     }
 
     Ok(())

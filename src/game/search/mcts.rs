@@ -5,7 +5,7 @@ use shakmaty::{Chess, Move, Position, Outcome, KnownOutcome};
 use std::collections::HashMap;
 use rand::seq::SliceRandom;
 
-const UCT_EXPLORATION_CONSTANT: f64 = 1.41421356237; // sqrt(2)
+const UCT_EXPLORATION_CONSTANT: f64 = std::f64::consts::SQRT_2;
 
 #[derive(Clone, Debug)]
 struct Node {
@@ -205,10 +205,10 @@ impl Searcher for MctsSearcher {
 
                 s.spawn(move |_| {
                     let worker_id = rand::random::<u64>();
-                    let worker_name = format!("MCTS-{}", i);
+                    let worker_name = format!("MCTS-{i}");
 
                     if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] starting: {}", worker_id, worker_name)));
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{worker_id:x}] starting: {worker_name}")));
                     }
 
                     if let Some(w) = &workers {
@@ -221,7 +221,7 @@ impl Searcher for MctsSearcher {
                     for _ in 0..simulations_per_thread {
                         let (leaf_index, leaf_pos) = local_searcher.select(0, &pos);
                         local_searcher.expand(leaf_index, &leaf_pos);
-                        let result = local_searcher.simulate(&leaf_pos, &config);
+                        let result = local_searcher.simulate(&leaf_pos, config);
                         local_searcher.backpropagate(leaf_index, result);
                     }
 
@@ -233,7 +233,7 @@ impl Searcher for MctsSearcher {
                     }
 
                     if let Some(sender) = &update_sender {
-                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] finished.", worker_id)));
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{worker_id:x}] finished.")));
                     }
                 });
             }

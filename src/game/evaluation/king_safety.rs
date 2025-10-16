@@ -44,15 +44,11 @@ fn evaluate_pawn_shield(board: &Board, color: Color, king_square: Square) -> i32
             shield_score += PAWN_SHIELD_BONUS;
         }
         // Check adjacent files
-        if king_file_index > 0 {
-             if !(our_pawns & Bitboard::from(Square::from_coords(File::new((king_file_index - 1) as u32), shield_rank))).is_empty() {
-                shield_score += PAWN_SHIELD_BONUS / 2;
-            }
+        if king_file_index > 0 && !(our_pawns & Bitboard::from(Square::from_coords(File::new((king_file_index - 1) as u32), shield_rank))).is_empty() {
+            shield_score += PAWN_SHIELD_BONUS / 2;
         }
-        if king_file_index < 7 {
-            if !(our_pawns & Bitboard::from(Square::from_coords(File::new((king_file_index + 1) as u32), shield_rank))).is_empty() {
-                shield_score += PAWN_SHIELD_BONUS / 2;
-            }
+        if king_file_index < 7 && !(our_pawns & Bitboard::from(Square::from_coords(File::new((king_file_index + 1) as u32), shield_rank))).is_empty() {
+            shield_score += PAWN_SHIELD_BONUS / 2;
         }
     }
     shield_score
