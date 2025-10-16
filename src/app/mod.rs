@@ -199,8 +199,8 @@ impl App {
                     self.active_matches.remove(&match_id);
 
                     let result_str = match game_match.result.as_str() {
-                        "1-0" => format!("White wins ({})", game_match.white_player_name),
-                        "0-1" => format!("Black wins ({})", game_match.black_player_name),
+                        "1-0" => format!("White wins ({})", game_match.white_player_name.replace(".json", "")),
+                        "0-1" => format!("Black wins ({})", game_match.black_player_name.replace(".json", "")),
                         "1/2-1/2" => "Draw".to_string(),
                         _ => "Unknown result".to_string(),
                     };
