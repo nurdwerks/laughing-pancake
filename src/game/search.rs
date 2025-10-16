@@ -1,16 +1,14 @@
 // src/game/search.rs
 
-pub mod quiescence;
 pub mod mcts;
-pub mod delta; // Still needed for quiescence search
-pub mod tt;
+pub mod evaluation_cache;
 
 use shakmaty::{Chess, Move, Position, Piece, san::SanPlus, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use crate::game::evaluation;
 use crossbeam_utils::thread;
 use num_cpus;
-use tt::TranspositionTable;
+use evaluation_cache::EvaluationCache;
 
 const MATE_SCORE: i32 = 1_000_000;
 
@@ -29,7 +27,6 @@ pub struct SearchConfig {
     pub use_aspiration_windows: bool,
     pub use_history_heuristic: bool,
     pub use_killer_moves: bool,
-    pub use_transposition_table: bool,
     pub mcts_simulations: u32,
     pub use_quiescence_search: bool,
     pub use_pvs: bool,
@@ -68,7 +65,6 @@ impl Default for SearchConfig {
             use_aspiration_windows: false,
             use_history_heuristic: false,
             use_killer_moves: false,
-            use_transposition_table: true,
             mcts_simulations: 1000,
             use_quiescence_search: true,
             use_pvs: true, // Default to true now that it's properly implemented
@@ -129,7 +125,7 @@ pub trait Searcher: Send {
 pub struct PvsSearcher {
     history_table: [[i32; 64]; 12],
     killer_moves: [[Option<Move>; 2]; 64],
-    transposition_table: Arc<Mutex<TranspositionTable>>,
+    evaluation_cache: Arc<Mutex<EvaluationCache>>,
 }
 
 impl Searcher for PvsSearcher {
@@ -147,7 +143,7 @@ impl Searcher for PvsSearcher {
         }
 
         const ASPIRATION_WINDOW_DELTA: i32 = 50;
-        let score_guess = evaluation::evaluate(pos, config);
+        let score_guess = self.evaluate_with_cache(pos, config);
         let alpha = score_guess - ASPIRATION_WINDOW_DELTA;
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
@@ -166,7 +162,7 @@ impl PvsSearcher {
         Self {
             history_table: [[0; 64]; 12],
             killer_moves: [[None; 2]; 64],
-            transposition_table: Arc::new(Mutex::new(TranspositionTable::new())),
+            evaluation_cache: Arc::new(Mutex::new(EvaluationCache::new())),
         }
     }
 
@@ -187,7 +183,7 @@ impl PvsSearcher {
             children: Vec::new(),
         };
         if legal_moves.is_empty() {
-            return (None, evaluation::evaluate(pos, config), root_node);
+            return (None, self.evaluate_with_cache(pos, config), root_node);
         }
         self.order_moves(&mut legal_moves, pos, 0, config, None);
 
@@ -201,8 +197,7 @@ impl PvsSearcher {
                 let mut searcher = self.clone();
                 let tx = tx.clone();
                 let workers = workers.clone();
-                let transposition_table = self.transposition_table.clone();
-                let update_sender = update_sender.clone();
+                let _update_sender = update_sender.clone();
                 let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
 
                 s.spawn(move |_| {
@@ -325,24 +320,6 @@ impl PvsSearcher {
         beta: i32,
         config: &SearchConfig,
     ) -> (i32, MoveTreeNode) {
-        if config.use_transposition_table {
-            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
-            if let Some(entry) = self.transposition_table.lock().unwrap().probe(&hash) {
-                if entry.depth >= depth {
-                    let score = entry.score;
-                    let mut node = MoveTreeNode {
-                        move_san: "tt_hit".to_string(),
-                        score,
-                        children: vec![],
-                    };
-                    if let Some(best_move) = entry.best_move {
-                        node.move_san = SanPlus::from_move(pos.clone(), best_move).to_string();
-                    }
-                    return (score, node);
-                }
-            }
-        }
-
         const LMR_MIN_DEPTH: u8 = 3;
         const LMR_MIN_MOVE_INDEX: usize = 2;
         const FUTILITY_MARGIN_PER_DEPTH: [i32; 4] = [0, 100, 250, 500];
@@ -361,33 +338,26 @@ impl PvsSearcher {
 
         if depth == 0 {
             let score = if config.use_quiescence_search {
-                quiescence::search(pos, alpha, beta, config)
+                self.quiescence_search(pos, alpha, beta, config)
             } else {
-                evaluation::evaluate(pos, config)
+                self.evaluate_with_cache(pos, config)
             };
             current_node.score = score;
             return (score, current_node);
         }
 
         if config.use_futility_pruning && (depth as usize) < FUTILITY_MARGIN_PER_DEPTH.len() {
-            let eval = evaluation::evaluate(pos, config);
+            let eval = self.evaluate_with_cache(pos, config);
             let margin = FUTILITY_MARGIN_PER_DEPTH[depth as usize];
             if eval + margin <= alpha {
-                let score = quiescence::search(pos, alpha, beta, config);
+                let score = self.quiescence_search(pos, alpha, beta, config);
                 current_node.score = score;
                 return (score, current_node)
             }
         }
 
-        let tt_move = if config.use_transposition_table {
-            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
-            self.transposition_table.lock().unwrap().probe(&hash).and_then(|e| e.best_move)
-        } else {
-            None
-        };
-        self.order_moves(&mut legal_moves, pos, ply, config, tt_move);
+        self.order_moves(&mut legal_moves, pos, ply, config, None);
 
-        let mut best_move = None;
         let mut a = alpha;
 
         for (i, m) in legal_moves.into_iter().enumerate() {
@@ -444,23 +414,11 @@ impl PvsSearcher {
                     self.killer_moves[ply as usize][1] = self.killer_moves[ply as usize][0];
                     self.killer_moves[ply as usize][0] = Some(m);
                 }
-                if config.use_transposition_table {
-                    let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
-                    let entry = tt::TTEntry {
-                        hash,
-                        depth,
-                        score: beta,
-                        bound: tt::Bound::Lower,
-                        best_move: Some(m),
-                    };
-                    self.transposition_table.lock().unwrap().store(entry);
-                }
                 current_node.score = beta;
                 return (beta, current_node);
             }
             if score > a {
                 a = score;
-                best_move = Some(m);
                 if config.use_history_heuristic {
                     if let Some(from_sq) = m.from() {
                         let piece_index = self.get_piece_index(pos.board().piece_at(from_sq).unwrap());
@@ -468,25 +426,6 @@ impl PvsSearcher {
                     }
                 }
             }
-        }
-
-        if config.use_transposition_table {
-            let hash = pos.zobrist_hash::<tt::Zobrist64>(EnPassantMode::Legal);
-            let bound = if a > alpha {
-                tt::Bound::Exact
-            } else if a >= beta {
-                tt::Bound::Lower
-            } else {
-                tt::Bound::Upper
-            };
-            let entry = tt::TTEntry {
-                hash,
-                depth,
-                score: a,
-                bound,
-                best_move,
-            };
-            self.transposition_table.lock().unwrap().store(entry);
         }
 
         current_node.score = a;
@@ -507,10 +446,7 @@ impl PvsSearcher {
         });
     }
 
-    fn score_move(&self, m: &Move, pos: &Chess, ply: u8, config: &SearchConfig, tt_move: Option<Move>) -> i32 {
-        if tt_move == Some(*m) {
-            return 2_000_000;
-        }
+    fn score_move(&self, m: &Move, pos: &Chess, ply: u8, config: &SearchConfig, _: Option<Move>) -> i32 {
         if m.is_capture() {
             return 1_000_000; // High score for captures to search them first
         }
@@ -529,6 +465,96 @@ impl PvsSearcher {
             }
         }
         0
+    }
+
+    fn evaluate_with_cache(&self, pos: &Chess, config: &SearchConfig) -> i32 {
+        let hash = pos.zobrist_hash::<evaluation_cache::Zobrist64>(EnPassantMode::Legal);
+        if let Some(score) = self.evaluation_cache.lock().unwrap().probe(&hash) {
+            return score;
+        }
+
+        let score = evaluation::evaluate(pos, config);
+        self.evaluation_cache.lock().unwrap().store(evaluation_cache::CacheEntry { hash, score });
+        score
+    }
+
+    fn quiescence_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+        if config.use_delta_pruning {
+            return self.delta_search(pos, alpha, beta, config);
+        }
+
+        let standing_pat = self.evaluate_with_cache(pos, config);
+        if standing_pat >= beta {
+            return beta;
+        }
+        if alpha < standing_pat {
+            alpha = standing_pat;
+        }
+
+        let captures = pos.legal_moves().into_iter().filter(|m| m.is_capture());
+
+        for m in captures {
+            if evaluation::see::see(pos.board(), m.from().unwrap(), m.to()) < 0 {
+                continue;
+            }
+            let mut new_pos = pos.clone();
+            new_pos.play_unchecked(m);
+
+            if new_pos.legal_moves().is_empty() {
+                if new_pos.is_checkmate() {
+                    return MATE_SCORE - 100;
+                }
+                return 0;
+            }
+
+            let score = -self.quiescence_search(&new_pos, -beta, -alpha, config);
+
+            if score >= beta {
+                return beta;
+            }
+            if score > alpha {
+                alpha = score;
+            }
+        }
+        alpha
+    }
+
+    fn delta_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+        let standing_pat = self.evaluate_with_cache(pos, config);
+        if standing_pat >= beta {
+            return beta;
+        }
+        if alpha < standing_pat {
+            alpha = standing_pat;
+        }
+
+        if config.use_delta_pruning {
+            let queen_value = evaluation::get_piece_value(shakmaty::Role::Queen);
+            if standing_pat - queen_value >= beta {
+                return beta;
+            }
+        }
+
+        let captures = pos.legal_moves().into_iter().filter(|m| m.is_capture());
+
+        for m in captures {
+            if evaluation::see::see(pos.board(), m.from().unwrap(), m.to()) < 0 {
+                continue;
+            }
+
+            let mut new_pos = pos.clone();
+            new_pos.play_unchecked(m);
+            let score = -self.delta_search(&new_pos, -beta, -alpha, config);
+
+            if score >= beta {
+                return beta;
+            }
+            if score > alpha {
+                alpha = score;
+            }
+        }
+
+        alpha
     }
 }
 

@@ -448,7 +448,6 @@ fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> Search
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
         use_killer_moves: if rng.gen_bool(0.5) { p1.use_killer_moves } else { p2.use_killer_moves },
-        use_transposition_table: if rng.gen_bool(0.5) { p1.use_transposition_table } else { p2.use_transposition_table },
         mcts_simulations: if rng.gen_bool(0.5) { p1.mcts_simulations } else { p2.mcts_simulations },
         use_quiescence_search: if rng.gen_bool(0.5) { p1.use_quiescence_search } else { p2.use_quiescence_search },
         use_pvs: if rng.gen_bool(0.5) { p1.use_pvs } else { p2.use_pvs },
@@ -491,7 +490,6 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
         config.search_depth = config.search_depth.clamp(3, 5);
     }
     // Mutate booleans with a 3% chance
-    if rng.gen_bool(0.03) { config.use_transposition_table = !config.use_transposition_table; }
     if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }
     if rng.gen_bool(0.03) { config.use_history_heuristic = !config.use_history_heuristic; }
     if rng.gen_bool(0.03) { config.use_killer_moves = !config.use_killer_moves; }
@@ -627,7 +625,6 @@ fn generate_initial_population(generation_dir: &Path) {
         config.search_depth = rng.gen_range(3..=5);
 
         // Randomize booleans
-        config.use_transposition_table = rng.gen_bool(0.5);
         config.use_aspiration_windows = rng.gen_bool(0.5);
         config.use_history_heuristic = rng.gen_bool(0.5);
         config.use_killer_moves = rng.gen_bool(0.5);
