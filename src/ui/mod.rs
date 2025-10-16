@@ -20,25 +20,52 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Progress bar and generation info
+            Constraint::Length(3), // Top status bar
             Constraint::Min(0),    // Main content
             Constraint::Percentage(25), // Log
         ])
         .split(frame.size());
 
-    // --- Progress Bar and Generation Info ---
-    let progress_block = Block::default().borders(Borders::ALL).title(format!(
-        "Generation: {} | Matches: {}/{}",
-        app.evolution_current_generation,
-        app.evolution_matches_completed,
-        app.evolution_total_matches
-    ));
+    // --- Top Status Bar ---
+    let top_bar_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34), // Generation Progress
+            Constraint::Percentage(33), // CPU Usage
+            Constraint::Percentage(33), // Memory Usage
+        ])
+        .split(main_layout[0]);
+
+    // Generation Progress
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
     let progress_bar = Gauge::default()
-        .block(progress_block)
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            "Generation: {} | Matches: {}/{}",
+            app.evolution_current_generation,
+            app.evolution_matches_completed,
+            app.evolution_total_matches
+        )))
         .gauge_style(Style::default().fg(Color::Green))
         .percent((progress * 100.0) as u16);
-    frame.render_widget(progress_bar, main_layout[0]);
+    frame.render_widget(progress_bar, top_bar_layout[0]);
+
+    // CPU Usage
+    let cpu_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
+        .gauge_style(Style::default().fg(Color::Yellow))
+        .percent(app.cpu_usage as u16);
+    frame.render_widget(cpu_gauge, top_bar_layout[1]);
+
+    // Memory Usage
+    let mem_usage_gb = app.memory_usage as f64 / 1_073_741_824.0;
+    let mem_total_gb = app.total_memory as f64 / 1_073_741_824.0;
+    let mem_percentage = (app.memory_usage as f64 / app.total_memory.max(1) as f64) * 100.0;
+    let mem_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("Memory Usage"))
+        .gauge_style(Style::default().fg(Color::Red))
+        .label(format!("{:.2}/{:.2} GB", mem_usage_gb, mem_total_gb))
+        .percent(mem_percentage as u16);
+    frame.render_widget(mem_gauge, top_bar_layout[2]);
 
     // --- Main Content Area ---
     let content_layout = Layout::default()

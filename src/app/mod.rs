@@ -11,6 +11,7 @@ use std::io;
 use std::thread;
 use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Sender, Receiver};
+use sysinfo::System;
 
 lazy_static! {
     pub static ref TUI_WRITER_SENDER: Mutex<Option<Sender<String>>> = Mutex::new(None);
@@ -48,6 +49,11 @@ pub struct Worker {
 pub struct App {
     should_quit: bool,
     pub error_message: Option<String>,
+    // System info
+    system: System,
+    pub cpu_usage: f32,
+    pub memory_usage: u64,
+    pub total_memory: u64,
     // Evolution state
     evolution_sender: Sender<ga::EvolutionUpdate>,
     pub evolution_receiver: Receiver<ga::EvolutionUpdate>,
@@ -70,10 +76,17 @@ pub struct App {
 impl App {
     pub fn new(_tablebase_path: Option<String>, _opening_book_path: Option<String>, log_receiver: Receiver<String>) -> Self {
         let (evo_tx, evo_rx) = unbounded();
+        let mut system = System::new_all();
+        system.refresh_all();
 
         Self {
             should_quit: false,
             error_message: None,
+            // System info
+            system,
+            cpu_usage: 0.0,
+            memory_usage: 0,
+            total_memory: 0,
             // Evolution state
             evolution_sender: evo_tx,
             evolution_receiver: evo_rx,
@@ -97,6 +110,7 @@ impl App {
     pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         self.start_evolution();
         while !self.should_quit {
+            self.update_system_stats();
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events()?;
             self.handle_evolution_updates();
@@ -109,6 +123,14 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn update_system_stats(&mut self) {
+        self.system.refresh_cpu_all();
+        self.system.refresh_memory();
+        self.cpu_usage = self.system.global_cpu_usage();
+        self.memory_usage = self.system.used_memory();
+        self.total_memory = self.system.total_memory();
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -169,7 +191,7 @@ impl App {
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
                 }
-                EvolutionUpdate::ThinkingUpdate(pv, eval) => {
+                EvolutionUpdate::ThinkingUpdate(_pv, eval) => {
                     self.evolution_current_match_eval = eval;
                 }
                 EvolutionUpdate::MovePlayed(san, material, board) => {
