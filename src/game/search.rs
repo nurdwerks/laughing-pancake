@@ -436,7 +436,7 @@ pub fn search(
     config: &SearchConfig,
     move_tree_sender: Option<Sender<MoveTreeNode>>,
 ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
-    match config.search_algorithm {
+    let (best_move, score, move_tree) = match config.search_algorithm {
         SearchAlgorithm::Pvs => {
             let mut searcher = PvsSearcher {
                 history_table: [[0; 64]; 12],
@@ -448,5 +448,12 @@ pub fn search(
             let mut searcher = MctsSearcher::new();
             searcher.search(pos, depth, config, move_tree_sender)
         }
+    };
+
+    if let Some(m) = best_move {
+        let san = SanPlus::from_move(pos.clone(), m);
+        tracing::info!("Move chosen: {} (depth {})", san, depth);
     }
+
+    (best_move, score, move_tree)
 }
