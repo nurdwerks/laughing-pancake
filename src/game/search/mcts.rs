@@ -87,8 +87,10 @@ impl MctsSearcher {
 
             let move_to_play = if !capture_moves.is_empty() {
                 *capture_moves.choose(&mut rand::thread_rng()).unwrap()
+            } else if let Some(m) = moves.choose(&mut rand::thread_rng()){
+                *m
             } else {
-                *moves.choose(&mut rand::thread_rng()).unwrap()
+                break;
             };
 
             sim_pos.play_unchecked(move_to_play);
@@ -140,11 +142,12 @@ impl MctsSearcher {
         let mut children = Vec::new();
 
         for (m, &child_index) in &node.children {
-            let mut new_pos = pos.clone();
-            new_pos.play_unchecked(*m);
-            let child_san = shakmaty::san::SanPlus::from_move(pos.clone(), *m).to_string();
-            let child_node = self.build_move_tree_recursive(child_index, &new_pos, child_san);
-            children.push(child_node);
+            let original_pos = pos.clone();
+            if let Ok(new_pos) = pos.clone().play(*m) {
+                let child_san = shakmaty::san::SanPlus::from_move(original_pos, *m).to_string();
+                let child_node = self.build_move_tree_recursive(child_index, &new_pos, child_san);
+                children.push(child_node);
+            }
         }
 
         MoveTreeNode {
@@ -157,7 +160,12 @@ impl MctsSearcher {
 
 use super::MoveTreeNode;
 use crate::app::Worker;
+use crate::ga::EvolutionUpdate;
+use crossbeam_channel::Sender;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use crossbeam_utils::thread;
+use num_cpus;
 
 impl Searcher for MctsSearcher {
     fn search(
@@ -165,28 +173,78 @@ impl Searcher for MctsSearcher {
         pos: &Chess,
         _depth: u8,
         config: &SearchConfig,
-        _workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        update_sender: Option<Sender<EvolutionUpdate>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
-        let root_index = 0;
+        let num_threads = num_cpus::get();
+        let simulations_per_thread = (config.mcts_simulations as usize / num_threads).max(1);
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        for _i in 0..config.mcts_simulations {
-            // 1. Selection
-            let (leaf_index, leaf_pos) = self.select(root_index, pos);
+        thread::scope(|s| {
+            for i in 0..num_threads {
+                let pos = pos.clone();
+                let workers = workers.clone();
+                let update_sender = update_sender.clone();
+                let tx = tx.clone();
 
-            // 2. Expansion
-            self.expand(leaf_index, &leaf_pos);
+                s.spawn(move |_| {
+                    let worker_id = rand::random::<u64>();
+                    let worker_name = format!("MCTS-{}", i);
 
-            // 3. Simulation
-            let result = self.simulate(&leaf_pos);
+                    if let Some(sender) = &update_sender {
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] starting: {}", worker_id, worker_name)));
+                    }
 
-            // 4. Backpropagation
-            self.backpropagate(leaf_index, result);
+                    if let Some(w) = &workers {
+                        let mut worker_list = w.lock().unwrap();
+                        worker_list.push(Worker { id: worker_id, name: worker_name.clone(), start_time: Instant::now() });
+                    }
+
+                    let mut local_searcher = MctsSearcher::new();
+
+                    for _ in 0..simulations_per_thread {
+                        let (leaf_index, leaf_pos) = local_searcher.select(0, &pos);
+                        local_searcher.expand(leaf_index, &leaf_pos);
+                        let result = local_searcher.simulate(&leaf_pos);
+                        local_searcher.backpropagate(leaf_index, result);
+                    }
+
+                    tx.send(local_searcher.tree).unwrap();
+
+                    if let Some(w) = &workers {
+                        let mut worker_list = w.lock().unwrap();
+                        worker_list.retain(|worker| worker.id != worker_id);
+                    }
+
+                    if let Some(sender) = &update_sender {
+                        let _ = sender.send(EvolutionUpdate::StatusUpdate(format!("Worker [{:x}] finished.", worker_id)));
+                    }
+                });
+            }
+        }).unwrap();
+
+        drop(tx);
+
+        for remote_tree in rx.iter() {
+            for (i, node) in remote_tree.iter().enumerate() {
+                if i >= self.tree.len() {
+                    self.tree.push(node.clone());
+                } else {
+                    self.tree[i].visits += node.visits;
+                    self.tree[i].wins += node.wins;
+                    for (m, child_index) in &node.children {
+                        if !self.tree[i].children.contains_key(m) {
+                            self.tree[i].children.insert(*m, *child_index);
+                        }
+                    }
+                }
+            }
         }
 
         (
             self.best_move(),
             0,
-            Some(self.build_move_tree_recursive(root_index, pos, "root".to_string())),
+            Some(self.build_move_tree_recursive(0, pos, "root".to_string())),
         )
     }
 }
