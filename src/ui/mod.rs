@@ -30,7 +30,10 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     draw_status_bar(frame, app, main_layout[0]);
 
     // --- Main Content Area (Matches) ---
-    let num_matches = app.active_matches.len().max(1); // Avoid division by zero
+    // Filter active matches to only include those that are currently running
+    let active_matches: Vec<_> = app.active_matches.iter().filter(|(_, m)| m.board.is_some()).collect();
+
+    let num_matches = active_matches.len().max(1); // Avoid division by zero
     let match_constraints = vec![Constraint::Percentage(100 / num_matches as u16); num_matches];
     let content_layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -38,7 +41,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .split(main_layout[1]);
 
     // Sort matches by ID to ensure a consistent display order
-    let mut sorted_matches: Vec<_> = app.active_matches.iter().collect();
+    let mut sorted_matches = active_matches;
     sorted_matches.sort_by_key(|(id, _)| *id);
 
 
