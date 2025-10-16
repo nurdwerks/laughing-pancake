@@ -1,12 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Distribution;
 use shakmaty::{Chess, Position};
 use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::game::search::{self, SearchConfig, SearchAlgorithm, MoveTreeNode};
+use crate::app::Worker;
+use crate::game::search::{self, SearchConfig, SearchAlgorithm};
 use crossbeam_channel::Sender;
 
 const EVOLUTION_DIR: &str = "evolution";
@@ -23,18 +25,18 @@ pub enum EvolutionUpdate {
     ThinkingUpdate(String, i32),  // Thinking message, evaluation
     MovePlayed(String, i32, Chess),      // SAN of the move, material difference, new board position
     StatusUpdate(String),
-    MoveTreeUpdate(MoveTreeNode),
     Panic(String),
 }
 
 /// Manages the evolution process in a background thread.
 pub struct EvolutionManager {
     update_sender: Sender<EvolutionUpdate>,
+    workers: Arc<Mutex<Vec<Worker>>>,
 }
 
 impl EvolutionManager {
-    pub fn new(update_sender: Sender<EvolutionUpdate>) -> Self {
-        Self { update_sender }
+    pub fn new(update_sender: Sender<EvolutionUpdate>, workers: Arc<Mutex<Vec<Worker>>>) -> Self {
+        Self { update_sender, workers }
     }
 
     fn send_status(&self, message: String) -> Result<(), ()> {
@@ -273,32 +275,22 @@ impl EvolutionManager {
             };
             let current_pos = pos.clone();
 
-            let (move_tree_tx, move_tree_rx) = crossbeam_channel::unbounded();
             let (search_result_tx, search_result_rx) = crossbeam_channel::unbounded();
 
             let thinking_msg = format!("AI is thinking for {:?}...", current_pos.turn());
             self.update_sender.send(EvolutionUpdate::ThinkingUpdate(thinking_msg, 0)).map_err(|_| ())?;
 
+            let workers = self.workers.clone();
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(move_tree_tx));
+                    let search_result = search::search(&current_pos, config.search_depth, &config, Some(workers));
                     search_result_tx.send(search_result).unwrap();
                 });
 
                 loop {
                     crossbeam_channel::select! {
-                        recv(move_tree_rx) -> msg => {
-                            if let Ok(tree) = msg {
-                                if self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree)).is_err() {
-                                    break;
-                                }
-                            }
-                        },
                         recv(search_result_rx) -> msg => {
-                            if let Ok((best_move, eval, final_tree)) = msg {
-                                if let Some(tree) = final_tree {
-                                    let _ = self.update_sender.send(EvolutionUpdate::MoveTreeUpdate(tree));
-                                }
+                            if let Ok((best_move, eval, _final_tree)) = msg {
                                 let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
                                 if let Some(m) = best_move {
                                     let san = SanPlus::from_move(pos.clone(), m);

@@ -1,16 +1,15 @@
 // app/mod.rs
 
 use crate::{ga::{self, EvolutionUpdate}};
-use crate::game::{search::{MoveTreeNode}};
 use crate::ui;
 use crossterm::event::{self, Event, KeyCode};
 use lazy_static::lazy_static;
-use std::sync::{Mutex};
+use std::sync::{Mutex, Arc};
 use ratatui::{prelude::*, Terminal, widgets::ListState};
 use shakmaty::{Chess};
 use std::io;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use crossbeam_channel::{unbounded, Sender, Receiver};
 
 lazy_static! {
@@ -39,6 +38,13 @@ impl io::Write for TuiMakeWriter {
     }
 }
 
+#[derive(Clone)]
+pub struct Worker {
+    pub id: u64,
+    pub name: String,
+    pub start_time: Instant,
+}
+
 pub struct App {
     should_quit: bool,
     pub error_message: Option<String>,
@@ -57,7 +63,7 @@ pub struct App {
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_white_player: String,
     pub evolution_black_player: String,
-    pub evolution_move_tree: Option<MoveTreeNode>,
+    pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
     log_receiver: Receiver<String>,
 }
 
@@ -83,7 +89,7 @@ impl App {
             evolution_thread_handle: None,
             evolution_white_player: "".to_string(),
             evolution_black_player: "".to_string(),
-            evolution_move_tree: None,
+            evolution_workers: Arc::new(Mutex::new(Vec::new())),
             log_receiver,
         }
     }
@@ -132,7 +138,7 @@ impl App {
     }
 
     fn start_evolution(&mut self) {
-        let evolution_manager = ga::EvolutionManager::new(self.evolution_sender.clone());
+        let evolution_manager = ga::EvolutionManager::new(self.evolution_sender.clone(), self.evolution_workers.clone());
         let handle = thread::spawn(move || {
             evolution_manager.run();
         });
@@ -157,18 +163,18 @@ impl App {
                 EvolutionUpdate::MatchStarted(white_player, black_player) => {
                     self.evolution_white_player = white_player;
                     self.evolution_black_player = black_player;
-                    self.evolution_move_tree = None; // Clear the tree for the new match
+                    self.evolution_workers.lock().unwrap().clear();
                 }
                 EvolutionUpdate::MatchCompleted(_game_match) => {
                     self.evolution_matches_completed += 1;
                     self.evolution_current_match_san.clear();
                     self.evolution_material_advantage = 0;
-                    self.evolution_move_tree = None; // Clear tree after match
+                    self.evolution_workers.lock().unwrap().clear();
                 }
                 EvolutionUpdate::ThinkingUpdate(pv, eval) => {
                     self.evolution_current_match_eval = eval;
                     if pv.starts_with("AI is thinking") {
-                        self.evolution_move_tree = None; // Clear tree at the start of a new move search
+                        self.evolution_workers.lock().unwrap().clear();
                     }
                 }
                 EvolutionUpdate::MovePlayed(san, material, board) => {
@@ -179,9 +185,6 @@ impl App {
                 EvolutionUpdate::StatusUpdate(message) => {
                     self.evolution_log.push(message);
                     self.autoscroll_log();
-                }
-                EvolutionUpdate::MoveTreeUpdate(tree) => {
-                    self.evolution_move_tree = Some(tree);
                 }
                 EvolutionUpdate::Panic(msg) => {
                     self.error_message = Some(format!("Evolution thread panicked: {}", msg));

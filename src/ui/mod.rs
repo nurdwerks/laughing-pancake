@@ -9,29 +9,7 @@ use shakmaty::{File, Piece, Position, Rank, Role, Square};
 use std::str::FromStr;
 
 use crate::app::App;
-use crate::game::search::MoveTreeNode;
 use ratatui::widgets::{Gauge, Wrap};
-
-fn format_move_tree(node: &MoveTreeNode, depth: usize) -> String {
-    let mut s = String::new();
-    let indent = if depth > 0 {
-        format!("{}-", "  ".repeat(depth - 1))
-    } else {
-        String::new()
-    };
-    s.push_str(&format!("{}{} (Score: {})\n", indent, node.move_san, node.score));
-
-    // To prevent the output from becoming too large, limit the depth and number of children shown
-    if depth < 5 {
-        let mut sorted_children = node.children.clone();
-        sorted_children.sort_by_key(|c| -c.score); // Show best moves first
-
-        for child in sorted_children.iter().take(5) { // Limit to top 5 children
-            s.push_str(&format_move_tree(child, depth + 1));
-        }
-    }
-    s
-}
 
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
@@ -66,7 +44,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
     let content_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(60), // Top row: Board and Move Tree
+            Constraint::Percentage(60), // Top row: Board and Worker List
             Constraint::Percentage(40), // Bottom row: Match Info and SAN
         ])
         .split(main_layout[1]);
@@ -75,7 +53,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(50), // Board
-            Constraint::Percentage(50), // Move Tree
+            Constraint::Percentage(50), // Worker List
         ])
         .split(content_layout[0]);
 
@@ -95,17 +73,25 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
         frame.render_widget(board_block, top_row_layout[0]);
     }
 
-    // Draw Move Tree
-    let move_tree_block = Block::default().borders(Borders::ALL).title("Move Tree");
-    let move_tree_text = if let Some(tree) = &app.evolution_move_tree {
-        format_move_tree(tree, 0)
-    } else {
-        "Waiting for AI move...".to_string()
+    // Draw Worker List
+    let workers_block = Block::default().borders(Borders::ALL).title("Running Threads");
+    let mut worker_items: Vec<ListItem> = {
+        let workers = app.evolution_workers.lock().unwrap();
+        let mut worker_vec: Vec<_> = workers.iter().collect();
+        // Sort by longest running first
+        worker_vec.sort_by_key(|w| w.start_time);
+        worker_vec.reverse();
+        worker_vec.iter().map(|w| {
+            let elapsed = w.start_time.elapsed();
+            ListItem::new(format!("{:.2?}: {}", elapsed, w.name))
+        }).collect()
     };
-    let move_tree_widget = Paragraph::new(move_tree_text)
-        .block(move_tree_block)
-        .wrap(Wrap { trim: true });
-    frame.render_widget(move_tree_widget, top_row_layout[1]);
+    if worker_items.is_empty() {
+        worker_items.push(ListItem::new("Waiting for AI move..."));
+    }
+    let workers_list = List::new(worker_items).block(workers_block);
+    frame.render_widget(workers_list, top_row_layout[1]);
+
 
     // Draw Match Info
     let info_text = vec![
