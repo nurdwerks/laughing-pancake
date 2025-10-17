@@ -97,11 +97,12 @@ impl Drop for CacheGuard {
 #[derive(Clone)]
 pub struct EvolutionManager {
     workers: Arc<Mutex<Vec<Worker>>>,
+    should_quit: Arc<Mutex<bool>>,
 }
 
 impl EvolutionManager {
-    pub fn new(workers: Arc<Mutex<Vec<Worker>>>) -> Self {
-        Self { workers }
+    pub fn new(workers: Arc<Mutex<Vec<Worker>>>, should_quit: Arc<Mutex<bool>>) -> Self {
+        Self { workers, should_quit }
     }
 
     fn send_status(&self, message: String) -> Result<(), ()> {
@@ -144,6 +145,10 @@ impl EvolutionManager {
 
 
         loop {
+            if *self.should_quit.lock().unwrap() {
+                self.send_status("Shutdown signal received, stopping evolution.".to_string())?;
+                break;
+            }
             self.send_status(format!("--- Starting Generation {generation_index} ---"))?;
             EVENT_BROKER.publish(Event::GenerationStarted(generation_index));
             let generation_dir = setup_directories(generation_index);
@@ -303,6 +308,10 @@ impl EvolutionManager {
 
         // Send all jobs to the workers
         for (match_index, game_match) in matches_to_play.clone() {
+            if *self.should_quit.lock().unwrap() {
+                self.send_status("Shutdown signal received, stopping new matches.".to_string())?;
+                break;
+            }
             if jobs_tx.send((match_index, game_match)).is_err() {
                 // This would happen if all worker threads panicked and the channel is closed.
                 break;
