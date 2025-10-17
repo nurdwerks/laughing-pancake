@@ -4,6 +4,7 @@ mod game;
 mod ga;
 mod event;
 mod server;
+mod constants;
 
 use crate::app::App;
 use clap::Parser;

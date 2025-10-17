@@ -9,6 +9,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
+use crate::constants::NUM_ROUNDS;
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 
@@ -260,7 +261,6 @@ self.send_status("Top 5 Elites (by ELO):".to_string())?;
 /// Runs a 25-round tournament with ELO-based matchmaking.
 fn run_tournament(&self, generation: &mut Generation, cache_manager: &CacheManager) -> Result<(), ()> {
         self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
-    const NUM_ROUNDS: u32 = 25;
 
     for round in generation.round..=NUM_ROUNDS {
         if *self.should_quit.lock().unwrap() {
