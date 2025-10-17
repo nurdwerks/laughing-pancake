@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rust Chess TUI</title>
+    <style>
+        body { font-family: monospace; }
+        #log {
+            width: 100%;
+            height: 80vh;
+            overflow-y: scroll;
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <h1>Rust Chess TUI - Live Log</h1>
+    <div id="log"></div>
+    <script>
+        const log = document.getElementById('log');
+        const ws = new WebSocket('ws://127.0.0.1:8080/ws');
+
+        ws.onmessage = (event) => {
+            const message = document.createElement('div');
+            message.textContent = event.data;
+            log.appendChild(message);
+            log.scrollTop = log.scrollHeight;
+        };
+    </script>
+</body>
+</html>

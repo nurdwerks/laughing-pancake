@@ -102,7 +102,7 @@ impl Default for SearchConfig {
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use crate::app::Worker;
-use crate::ga::EvolutionUpdate;
+use crate::event::Event;
 use crossbeam_channel::Sender;
 
 #[derive(Clone, Debug)]
@@ -121,7 +121,7 @@ pub trait Searcher: Send {
         depth: u8,
         config: &SearchConfig,
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<EvolutionUpdate>>,
+        update_sender: Option<Sender<Event>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>);
     fn as_any(&self) -> &dyn Any;
 }
@@ -144,7 +144,7 @@ impl Searcher for PvsSearcher {
         depth: u8,
         config: &SearchConfig,
         workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<EvolutionUpdate>>,
+        update_sender: Option<Sender<Event>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
             let args = PvsRootSearchArgs {
@@ -182,7 +182,7 @@ struct PvsRootSearchArgs<'a> {
     alpha: i32,
     beta: i32,
     workers: Option<Arc<Mutex<Vec<Worker>>>>,
-    update_sender: Option<Sender<EvolutionUpdate>>,
+    update_sender: Option<Sender<Event>>,
 }
 
 impl PvsSearcher {
@@ -587,4 +587,3 @@ impl PvsSearcher {
         alpha
     }
 }
-
