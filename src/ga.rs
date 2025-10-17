@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Distribution;
-use shakmaty::{Chess, Position};
+use shakmaty::{Chess, Position, zobrist::{Zobrist64, ZobristHash}, EnPassantMode};
 use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
@@ -492,7 +492,7 @@ fn play_round_matches(
         } else {
             Box::new(search::mcts::MctsSearcher::new())
         };
-
+        let mut position_counts: HashMap<u64, u32> = HashMap::new();
         let mut game_result_override = None;
         while !pos.is_game_over() {
             // End the game in a draw after 60 moves (120 half-moves/plies).
@@ -500,7 +500,13 @@ fn play_round_matches(
                 game_result_override = Some(GameResult::Draw);
                 break;
             }
-
+            let zobrist_hash: Zobrist64 = pos.zobrist_hash(EnPassantMode::Legal);
+            let count = position_counts.entry(zobrist_hash.0).or_insert(0);
+            *count += 1;
+            if *count >= 4 {
+                game_result_override = Some(GameResult::Draw);
+                break;
+            }
             let (config, searcher) = if pos.turn().is_white() {
                 (white_config.clone(), &mut white_searcher)
             } else {
