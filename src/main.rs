@@ -13,7 +13,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
-use std::{error::Error, io, panic, thread};
+use std::{error::Error, io, panic, process, thread};
 
 
 #[derive(Parser, Debug)]
@@ -70,8 +70,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     if let Err(err) = res {
         println!("{err:?}");
+        process::exit(1);
     } else if let Some(err) = app.error_message {
         println!("Application exited with an error: {err}");
+        process::exit(1);
     }
 
     Ok(())

@@ -54,6 +54,7 @@ pub struct App {
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatch>,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
+    evolution_should_quit: Arc<Mutex<bool>>,
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
     // Websocket state
     last_ws_update: Instant,
@@ -82,6 +83,7 @@ impl App {
             evolution_total_matches: 0,
             active_matches: HashMap::new(),
             evolution_thread_handle: None,
+            evolution_should_quit: Arc::new(Mutex::new(false)),
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
             // Websocket state
             last_ws_update: Instant::now(),
@@ -244,10 +246,12 @@ impl App {
                     self.should_quit = true;
                 }
                 Event::RequestQuit => {
+                    *self.evolution_should_quit.lock().unwrap() = true;
                     self.graceful_quit = true;
                     EVENT_BROKER.publish(Event::StatusUpdate("Graceful shutdown initiated. Waiting for current matches to complete...".to_string()));
                 }
                 Event::ForceQuit => {
+                    *self.evolution_should_quit.lock().unwrap() = true;
                     self.should_quit = true;
                 }
                 Event::WebsocketStateUpdate(_) => {
@@ -259,7 +263,10 @@ impl App {
     }
 
     fn start_evolution(&mut self) {
-        let evolution_manager = ga::EvolutionManager::new(self.evolution_workers.clone());
+        let evolution_manager = ga::EvolutionManager::new(
+            self.evolution_workers.clone(),
+            self.evolution_should_quit.clone(),
+        );
         let handle = thread::spawn(move || {
             evolution_manager.run();
         });
