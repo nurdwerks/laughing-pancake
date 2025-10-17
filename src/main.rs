@@ -13,7 +13,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
-use std::{error::Error, io, panic};
+use std::{error::Error, io, panic, thread};
 
 
 #[derive(Parser, Debug)]
@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let _args = Args::parse();
 
     // Start the server in a new thread
-    tokio::spawn(async {
-        if let Err(e) = server::start_server().await {
-            eprintln!("Server error: {}", e);
+    thread::spawn(|| {
+        if let Err(e) = actix_rt::System::new().block_on(server::start_server()) {
+            eprintln!("Server error: {e}");
         }
     });
 
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let payload = info.payload().downcast_ref::<&str>().unwrap_or(&"");
         let location = info.location().unwrap();
         let msg = format!("panic occurred: {payload}, location: {location}");
-        eprintln!("{}", msg);
+        eprintln!("{msg}");
     }));
 
 

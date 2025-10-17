@@ -140,9 +140,11 @@ impl App {
                     self.active_matches.clear();
                 }
                 Event::MatchStarted(match_id, white_player, black_player) => {
-                    let mut match_state = ActiveMatch::default();
-                    match_state.white_player = white_player;
-                    match_state.black_player = black_player;
+                    let match_state = ActiveMatch {
+                        white_player,
+                        black_player,
+                        ..Default::default()
+                    };
                     self.active_matches.insert(match_id, match_state);
                 }
                 Event::MatchCompleted(match_id, game_match) => {
