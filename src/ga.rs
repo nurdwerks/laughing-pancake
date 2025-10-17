@@ -147,7 +147,7 @@ impl EvolutionManager {
         loop {
             if *self.should_quit.lock().unwrap() {
                 self.send_status("Shutdown signal received, stopping evolution.".to_string())?;
-                break;
+                break Ok(());
             }
             self.send_status(format!("--- Starting Generation {generation_index} ---"))?;
             EVENT_BROKER.publish(Event::GenerationStarted(generation_index));
