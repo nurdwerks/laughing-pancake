@@ -128,7 +128,6 @@ In addition to PVS, the AI uses several other techniques to improve search effic
 - To make a move, type the move in UCI notation (e.g., "e2e4") and press Enter.
 - **'s'**: Switch between "Player vs. AI" and "AI vs. AI" modes.
 - **'c'**: Open the AI configuration screen.
-- **'r'**: Restart the application (requires running via `run.sh`).
 - **'q'**: Quit the application.
 
 ### AI Configuration Screen
@@ -151,16 +150,6 @@ Example:
 ```sh
 ./target/release/rust-chess-tui --tablebase-path /path/to/syzygy --opening-book /path/to/book.pgn
 ```
-
-## Restarting the Application
-
-To enable the application to restart itself, you must run it using the provided `run.sh` script:
-
-```sh
-./run.sh
-```
-
-This script will first build the application and then launch it. If you press 'r' in the TUI, the application will exit with a special code that the `run.sh` script will detect, causing it to relaunch the application.
 
 ## Project Structure
 
