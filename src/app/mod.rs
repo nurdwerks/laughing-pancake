@@ -8,7 +8,7 @@ use crate::{
 };
 use crossterm::event::{self, KeyCode};
 use ratatui::{prelude::*, widgets::ListState, Terminal};
-use shakmaty::{fen::Fen, Chess, Setup};
+use shakmaty::{fen::Fen, Chess};
 use std::{
     collections::HashMap,
     io,
@@ -275,18 +275,4 @@ impl App {
         self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 
-    pub fn get_config_for_player(&self, player_name: &str) -> Option<crate::game::search::SearchConfig> {
-        if player_name.is_empty() {
-            return None;
-        }
-        let path = std::path::Path::new("evolution")
-            .join(format!("generation_{}", self.evolution_current_generation))
-            .join(player_name);
-
-        if let Ok(file_content) = std::fs::read_to_string(path) {
-            serde_json::from_str(&file_content).ok()
-        } else {
-            None
-        }
-    }
 }
