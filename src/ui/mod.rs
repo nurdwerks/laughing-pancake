@@ -71,7 +71,7 @@ fn draw_match_pane(frame: &mut Frame, area: Rect, match_id: &usize, match_state:
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!("SAN | Eval: {} | Material: {}", match_state.eval, match_state.material)),
+                .title(format!("SAN | Material: {}", match_state.material)),
         )
         .wrap(Wrap { trim: true });
     frame.render_widget(san_widget, inner_layout[1]);
@@ -117,7 +117,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         "Graceful shutdown...".to_string()
     } else {
         format!(
-            "Gen: {} | Round: {} | Matches: {}/{}",
+            "G: {} | R: {} | M: {}/{}",
             app.evolution_current_generation,
             app.evolution_current_round,
             app.evolution_matches_completed,
