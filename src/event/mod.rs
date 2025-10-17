@@ -21,6 +21,7 @@ pub enum Event {
     MovePlayed(usize, String, i32, Chess), // Match index, SAN of the move, material difference, new board position
     StatusUpdate(String),
     Panic(String),
+    Quit,
 }
 
 /// The `EventBroker` is responsible for receiving events and broadcasting them to all subscribers.

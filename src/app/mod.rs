@@ -179,6 +179,9 @@ impl App {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
                     self.should_quit = true;
                 }
+                Event::Quit => {
+                    self.should_quit = true;
+                }
             }
         }
         Ok(())
