@@ -3,14 +3,12 @@
 use crate::game::evaluation;
 use crate::game::evaluation::see;
 use crate::game::search::{MoveTreeNode, SearchConfig, Searcher, MctsCache, MctsNodeData};
-use crossbeam_channel::Sender;
 use crossbeam_utils::thread;
 use num_cpus;
 use shakmaty::{Chess, Move, Position, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
 use crate::app::Worker;
-use crate::event::Event;
 
 pub struct MctsSearcher {
     mcts_cache: Arc<Mutex<MctsCache>>,
@@ -36,10 +34,26 @@ impl Searcher for MctsSearcher {
         pos: &Chess,
         _depth: u8,
         config: &SearchConfig,
-        _workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        _update_sender: Option<Sender<Event>>,
+        workers: Option<Arc<Mutex<Vec<Worker>>>>,
+        match_id: Option<usize>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+        let worker_id = rand::random::<u64>();
+        if let (Some(workers), Some(match_id)) = (workers.clone(), match_id) {
+            let mut worker_list = workers.lock().unwrap();
+            worker_list.push(Worker {
+                id: worker_id,
+                name: format!("[Match {}] MCTS", match_id),
+                start_time: std::time::Instant::now(),
+            });
+        }
+
         let (best_move, score, final_tree) = self.mcts(pos, config.mcts_simulations, config);
+
+        if let Some(workers) = workers {
+            let mut worker_list = workers.lock().unwrap();
+            worker_list.retain(|worker| worker.id != worker_id);
+        }
+
         (best_move, score, Some(final_tree))
     }
 

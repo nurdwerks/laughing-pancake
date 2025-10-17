@@ -32,7 +32,7 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Min(0),         // Main content area for matches
             Constraint::Percentage(25), // Bottom area for Log and Workers
         ])
-        .split(frame.size());
+        .split(area);
 
     // --- Top Status Bar ---
     draw_status_bar(frame, app, main_layout[0]);
@@ -88,15 +88,15 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
         frame.render_widget(san_widget, match_layout[1]);
     }
 
-    // --- Bottom Pane (Log and Workers) ---
+    // --- Bottom Pane (Log, Workers, and System Stats) ---
     let bottom_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(50), // Log
-            Constraint::Percentage(50), // Worker List
+            Constraint::Percentage(25), // Worker List
+            Constraint::Percentage(25), // System Stats
         ])
         .split(main_layout[2]);
-
 
     // --- Log View ---
     let log_items: Vec<ListItem> = app
@@ -111,6 +111,9 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // --- Worker List ---
     draw_worker_list(frame, app, bottom_layout[1]);
+
+    // --- System Stats ---
+    draw_system_stats_pane(frame, app, bottom_layout[2]);
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -167,45 +170,47 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .label(format!("{mem_usage_gb:.2}/{mem_total_gb:.2} GB"))
         .percent(mem_percentage as u16);
     frame.render_widget(mem_gauge, top_bar_layout[2]);
+}
 
-    // System Stats Text
-    let text_chunks = Layout::default()
-        .direction(Direction::Horizontal)
+fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
+    let stats_layout = Layout::default()
+        .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(status_chunks[2]);
+        .split(area);
 
     // CPU Core Usage
-    let cpu_text: Vec<Span> = app
+    let cpu_text: Vec<Line> = app
         .system
         .cpus()
         .iter()
-        .map(|cpu| Span::raw(format!("Core {}: {:.2}% ", app.system.cpus().iter().position(|c| c.name() == cpu.name()).unwrap_or(0), cpu.cpu_usage())))
+        .enumerate()
+        .map(|(i, cpu)| Line::from(format!("Core {}: {:.2}%", i, cpu.cpu_usage())))
         .collect();
-    let cpu_paragraph = Paragraph::new(Line::from(cpu_text))
+    let cpu_paragraph = Paragraph::new(cpu_text)
         .block(Block::default().borders(Borders::ALL).title("CPU Core Usage"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(cpu_paragraph, text_chunks[0]);
+    frame.render_widget(cpu_paragraph, stats_layout[0]);
 
     // Component Temperatures
-    let temp_text: Vec<Span> = app
+    let temp_text: Vec<Line> = app
         .components
         .iter()
         .map(|c| {
             let temp = c.temperature().map(|t| format!("{:.2}°C", t)).unwrap_or_else(|| "N/A".to_string());
-            Span::raw(format!("{}: {} ", c.label(), temp))
+            Line::from(format!("{}: {}", c.label(), temp))
         })
         .collect();
-    let temp_paragraph = Paragraph::new(Line::from(temp_text))
+    let temp_paragraph = Paragraph::new(temp_text)
         .block(Block::default().borders(Borders::ALL).title("Temperatures"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(temp_paragraph, text_chunks[1]);
+    frame.render_widget(temp_paragraph, stats_layout[1]);
 }
 
 fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
     let workers_block = Block::default().borders(Borders::ALL).title("Running Threads");
     let worker_items: Vec<ListItem> = {
         let workers = app.evolution_workers.lock().unwrap();
-        let mut worker_vec: Vec<_> = workers.iter().collect();
+        let mut worker_vec: Vec<_> = workers.iter().cloned().collect();
         // Sort by start_time ascending, so longest running are first
         worker_vec.sort_by_key(|w| w.start_time);
         worker_vec

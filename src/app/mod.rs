@@ -126,33 +126,29 @@ impl App {
     }
 
     fn publish_ws_state_update(&mut self) {
-        if self.last_ws_update.elapsed() >= Duration::from_millis(500) {
-            let workers = self.evolution_workers.lock().unwrap();
+        if self.last_ws_update.elapsed() < Duration::from_millis(500) {
+            return;
+        }
+
+        let workers_arc = self.evolution_workers.clone();
+        let evolution_log = self.evolution_log.clone();
+        let active_matches = self.active_matches.clone();
+        let state_clone = self.clone_state_for_websocket();
+
+        tokio::spawn(async move {
+            let workers = workers_arc.lock().unwrap();
             let state = WebsocketState {
-                graceful_shutdown: self.graceful_quit,
-                cpu_usage: self.cpu_usage,
-                memory_usage: self.memory_usage,
-                total_memory: self.total_memory,
-                cpus: self
-                    .system
-                    .cpus()
-                    .iter()
-                    .map(|c| CpuState { usage: c.cpu_usage() })
-                    .collect(),
-                components: self
-                    .components
-                    .iter()
-                    .map(|c| ComponentState {
-                        label: c.label().to_string(),
-                        temperature: c.temperature().unwrap_or(0.0),
-                    })
-                    .collect(),
-                evolution_log: self.evolution_log.clone(),
-                evolution_current_generation: self.evolution_current_generation,
-                evolution_matches_completed: self.evolution_matches_completed,
-                evolution_total_matches: self.evolution_total_matches,
-                active_matches: self
-                    .active_matches
+                graceful_shutdown: state_clone.graceful_shutdown,
+                cpu_usage: state_clone.cpu_usage,
+                memory_usage: state_clone.memory_usage,
+                total_memory: state_clone.total_memory,
+                cpus: state_clone.cpus,
+                components: state_clone.components,
+                evolution_log,
+                evolution_current_generation: state_clone.evolution_current_generation,
+                evolution_matches_completed: state_clone.evolution_matches_completed,
+                evolution_total_matches: state_clone.evolution_total_matches,
+                active_matches: active_matches
                     .iter()
                     .filter_map(|(id, m)| {
                         m.board.as_ref().map(|board| {
@@ -181,8 +177,9 @@ impl App {
                     .collect(),
             };
             EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
-            self.last_ws_update = Instant::now();
-        }
+        });
+
+        self.last_ws_update = Instant::now();
     }
 
     async fn handle_events(&mut self) -> io::Result<()> {
@@ -302,4 +299,34 @@ impl App {
         self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 
+    fn clone_state_for_websocket(&self) -> WebsocketState {
+        WebsocketState {
+            graceful_shutdown: self.graceful_quit,
+            cpu_usage: self.cpu_usage,
+            memory_usage: self.memory_usage,
+            total_memory: self.total_memory,
+            cpus: self
+                .system
+                .cpus()
+                .iter()
+                .map(|c| CpuState {
+                    usage: c.cpu_usage(),
+                })
+                .collect(),
+            components: self
+                .components
+                .iter()
+                .map(|c| ComponentState {
+                    label: c.label().to_string(),
+                    temperature: c.temperature().unwrap_or(0.0),
+                })
+                .collect(),
+            evolution_log: Vec::new(), // This is cloned separately
+            evolution_current_generation: self.evolution_current_generation,
+            evolution_matches_completed: self.evolution_matches_completed,
+            evolution_total_matches: self.evolution_total_matches,
+            active_matches: HashMap::new(), // This is cloned separately
+            evolution_workers: Vec::new(),   // This is cloned separately
+        }
+    }
 }

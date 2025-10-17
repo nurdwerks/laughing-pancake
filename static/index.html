@@ -101,10 +101,11 @@
             grid-template-columns: repeat(8, 1fr);
             grid-template-rows: repeat(8, 1fr);
             aspect-ratio: 1;
-            /* Make it take up most of the container, but not all */
-            width: 95%;
-            /* Also constrain by height on portrait screens */
-            max-width: 95vh;
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            box-sizing: border-box;
         }
         .square {
             display: flex;
@@ -147,22 +148,21 @@
             <div id="mem-status" class="status-gauge"></div>
         </div>
 
-        <div id="system-stats-container">
-            <!-- System stats will be dynamically inserted here -->
-        </div>
-
         <div id="matches-container">
             <!-- Match panes will be dynamically inserted here -->
         </div>
 
         <div id="bottom-container">
-            <div id="log-container">
+            <div id="log-container" style="flex: 2;">
                 <h2>Log</h2>
                 <div id="log-content" class="scroll-content"></div>
             </div>
-            <div id="workers-container">
+            <div id="workers-container" style="flex: 1;">
                 <h2>Running Threads</h2>
                 <div id="workers-content" class="scroll-content"></div>
+            </div>
+            <div id="system-stats-container" style="flex: 1;">
+                 <!-- System stats will be dynamically inserted here -->
             </div>
         </div>
     </div>
@@ -273,6 +273,8 @@
                     if (piece) {
                         const colorClass = piece === piece.toUpperCase() ? 'white-piece' : 'black-piece';
                         html += `<span class="piece ${colorClass}">${PIECE_SYMBOLS[piece]}</span>`;
+                    } else {
+                        html += '&nbsp;';
                     }
                     html += '</div>';
                 }
@@ -322,25 +324,22 @@
 
         function updateSystemStats(state) {
             const container = document.getElementById('system-stats-container');
-            container.innerHTML = '';
+            container.innerHTML = ''; // Clear previous stats
 
-            const cpuDiv = document.createElement('div');
-            cpuDiv.className = 'system-stat';
             let cpuHtml = '<div><strong>CPU Core Usage</strong></div>';
             state.cpus.forEach((cpu, index) => {
                 cpuHtml += `<div>Core ${index}: ${cpu.usage.toFixed(2)}%</div>`;
             });
-            cpuDiv.innerHTML = cpuHtml;
-            container.appendChild(cpuDiv);
 
-            const tempDiv = document.createElement('div');
-            tempDiv.className = 'system-stat';
-            let tempHtml = '<div><strong>Component Temperatures</strong></div>';
+            let tempHtml = '<div><strong>Temperatures</strong></div>';
             state.components.forEach(component => {
                 tempHtml += `<div>${component.label}: ${component.temperature.toFixed(2)}°C</div>`;
             });
-            tempDiv.innerHTML = tempHtml;
-            container.appendChild(tempDiv);
+
+            container.innerHTML = `
+                <div class="system-stat">${cpuHtml}</div>
+                <div class="system-stat">${tempHtml}</div>
+            `;
         }
     </script>
 </body>
