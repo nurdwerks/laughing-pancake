@@ -129,14 +129,17 @@
         }
         #system-stats-container {
             display: flex;
-            gap: 1em;
-            margin-bottom: 1em;
+            flex-direction: column;
+            border: 1px solid #6272a4;
+            padding: 0.5em;
+            overflow-y: auto;
         }
         .system-stat {
-            border: 1px solid #6272a4;
             padding: 0.5em;
             flex: 1;
             text-align: center;
+            overflow-y: auto;
+            height: 50%;
         }
     </style>
 </head>
@@ -178,19 +181,43 @@
             'P': '♙', 'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔'
         };
 
-        const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+        let ws;
+        let gitHash = null;
 
-        ws.onmessage = (event) => {
-            const state = JSON.parse(event.data);
-            updateStatusBar(state);
-            updateSystemStats(state);
-            updateMatches(state.active_matches);
-            updateLog(state.evolution_log);
-            updateWorkers(state.evolution_workers);
-        };
+        function connect() {
+            ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
 
-        document.getElementById('request_quit').onclick = () => ws.send('request_quit');
-        document.getElementById('force_quit').onclick = () => ws.send('force_quit');
+            ws.onmessage = (event) => {
+                const state = JSON.parse(event.data);
+
+                if (gitHash === null) {
+                    gitHash = state.git_hash;
+                } else if (gitHash !== state.git_hash) {
+                    // Force refresh if the git hash has changed
+                    window.location.reload();
+                }
+
+                updateStatusBar(state);
+                updateSystemStats(state);
+                updateMatches(state.active_matches);
+                updateLog(state.evolution_log);
+                updateWorkers(state.evolution_workers);
+            };
+
+            ws.onclose = () => {
+                // Attempt to reconnect after a delay
+                setTimeout(connect, 1000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            document.getElementById('request_quit').onclick = () => ws.send('request_quit');
+            document.getElementById('force_quit').onclick = () => ws.send('force_quit');
+        }
+
+        connect();
 
         function updateStatusBar(state) {
             // Generation Status
@@ -326,20 +353,24 @@
             const container = document.getElementById('system-stats-container');
             container.innerHTML = ''; // Clear previous stats
 
-            let cpuHtml = '<div><strong>CPU Core Usage</strong></div>';
+            const cpuDiv = document.createElement('div');
+            cpuDiv.className = 'system-stat';
+            let cpuHtml = '<h2>CPU Core Usage</h2>';
             state.cpus.forEach((cpu, index) => {
                 cpuHtml += `<div>Core ${index}: ${cpu.usage.toFixed(2)}%</div>`;
             });
+            cpuDiv.innerHTML = cpuHtml;
 
-            let tempHtml = '<div><strong>Temperatures</strong></div>';
+            const tempDiv = document.createElement('div');
+            tempDiv.className = 'system-stat';
+            let tempHtml = '<h2>Temperatures</h2>';
             state.components.forEach(component => {
                 tempHtml += `<div>${component.label}: ${component.temperature.toFixed(2)}°C</div>`;
             });
+            tempDiv.innerHTML = tempHtml;
 
-            container.innerHTML = `
-                <div class="system-stat">${cpuHtml}</div>
-                <div class="system-stat">${tempHtml}</div>
-            `;
+            container.appendChild(cpuDiv);
+            container.appendChild(tempDiv);
         }
     </script>
 </body>

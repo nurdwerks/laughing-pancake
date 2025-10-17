@@ -22,6 +22,7 @@ pub struct ComponentState {
 /// This struct contains the entire state of the application that the web UI needs to render.
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
+    pub git_hash: String,
     pub graceful_shutdown: bool,
     // System info
     pub cpu_usage: f32,

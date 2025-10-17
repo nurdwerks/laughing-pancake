@@ -5,15 +5,15 @@ mod ga;
 mod event;
 mod server;
 
-use crate::app::{App};
+use crate::app::App;
 use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{prelude::CrosstermBackend, Terminal};
-use std::{error::Error, io, panic, process, thread};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::{error::Error, panic, process, thread};
 
 
 #[derive(Parser, Debug)]
@@ -33,6 +33,15 @@ struct Args {
 async fn main() -> Result<(), Box<dyn Error>> {
     let _args = Args::parse();
 
+    // Get the git hash
+    let git_hash = match process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+    {
+        Ok(output) => String::from_utf8(output.stdout).unwrap_or_default().trim().to_string(),
+        Err(_) => "N/A".to_string(),
+    };
+
     // Start the server in a new thread
     thread::spawn(|| {
         if let Err(e) = actix_rt::System::new().block_on(server::start_server()) {
@@ -49,14 +58,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
     // setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
 
     // create app and run it
-    let mut app = App::new();
+    let mut app = App::new(git_hash);
     let res = app.run(&mut terminal).await;
 
     // restore terminal
