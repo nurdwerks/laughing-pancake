@@ -62,10 +62,11 @@ pub struct App {
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
     // Websocket state
     last_ws_update: Instant,
+    git_hash: String,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(git_hash: String) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
 
@@ -92,6 +93,7 @@ impl App {
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
             // Websocket state
             last_ws_update: Instant::now(),
+            git_hash,
         }
     }
 
@@ -138,6 +140,7 @@ impl App {
         tokio::spawn(async move {
             let workers = workers_arc.lock().unwrap();
             let state = WebsocketState {
+                git_hash: state_clone.git_hash,
                 graceful_shutdown: state_clone.graceful_shutdown,
                 cpu_usage: state_clone.cpu_usage,
                 memory_usage: state_clone.memory_usage,
@@ -301,6 +304,7 @@ impl App {
 
     fn clone_state_for_websocket(&self) -> WebsocketState {
         WebsocketState {
+            git_hash: self.git_hash.clone(),
             graceful_shutdown: self.graceful_quit,
             cpu_usage: self.cpu_usage,
             memory_usage: self.memory_usage,

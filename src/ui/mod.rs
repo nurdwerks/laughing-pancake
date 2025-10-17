@@ -117,25 +117,6 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let status_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Top row for gauges
-            Constraint::Length(1), // Spacer
-            Constraint::Min(0),    // Bottom row for text stats
-        ])
-        .split(area);
-
-    let top_bar_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(status_chunks[0]);
-
-    // Generation Progress
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
     let progress_title = if app.graceful_quit {
         "Graceful shutdown initiated...".to_string()
@@ -151,25 +132,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title(progress_title))
         .gauge_style(Style::default().fg(Color::Green))
         .percent((progress * 100.0) as u16);
-    frame.render_widget(progress_bar, top_bar_layout[0]);
-
-    // CPU Usage
-    let cpu_gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
-        .gauge_style(Style::default().fg(Color::Yellow))
-        .percent(app.cpu_usage as u16);
-    frame.render_widget(cpu_gauge, top_bar_layout[1]);
-
-    // Memory Usage
-    let mem_usage_gb = app.memory_usage as f64 / 1_073_741_824.0;
-    let mem_total_gb = app.total_memory as f64 / 1_073_741_824.0;
-    let mem_percentage = (app.memory_usage as f64 / app.total_memory.max(1) as f64) * 100.0;
-    let mem_gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title("Memory Usage"))
-        .gauge_style(Style::default().fg(Color::Red))
-        .label(format!("{mem_usage_gb:.2}/{mem_total_gb:.2} GB"))
-        .percent(mem_percentage as u16);
-    frame.render_widget(mem_gauge, top_bar_layout[2]);
+    frame.render_widget(progress_bar, area);
 }
 
 fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
