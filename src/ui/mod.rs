@@ -117,8 +117,9 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         "Graceful shutdown...".to_string()
     } else {
         format!(
-            "Gen: {} | Matches: {}/{}",
+            "Gen: {} | Round: {} | Matches: {}/{}",
             app.evolution_current_generation,
+            app.evolution_current_round,
             app.evolution_matches_completed,
             app.evolution_total_matches
         )
