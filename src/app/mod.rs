@@ -1,9 +1,14 @@
 // app/mod.rs
 
-use crate::{event::{Event, EVENT_BROKER}, ga, ui};
+use crate::{
+    event::{
+        ActiveMatchState, Event, WebsocketState, WorkerState, EVENT_BROKER,
+    },
+    ga, ui,
+};
 use crossterm::event::{self, KeyCode};
 use ratatui::{prelude::*, widgets::ListState, Terminal};
-use shakmaty::Chess;
+use shakmaty::{fen::Fen, Chess, Setup};
 use std::{
     collections::HashMap,
     io,
@@ -50,6 +55,8 @@ pub struct App {
     pub active_matches: HashMap<usize, ActiveMatch>,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
+    // Websocket state
+    last_ws_update: Instant,
 }
 
 impl App {
@@ -76,6 +83,8 @@ impl App {
             active_matches: HashMap::new(),
             evolution_thread_handle: None,
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
+            // Websocket state
+            last_ws_update: Instant::now(),
         }
     }
 
@@ -83,6 +92,7 @@ impl App {
         self.start_evolution();
         while !self.should_quit {
             self.update_system_stats();
+            self.publish_ws_state_update();
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events().await?;
 
@@ -106,6 +116,51 @@ impl App {
         self.cpu_usage = self.system.global_cpu_usage();
         self.memory_usage = self.system.used_memory();
         self.total_memory = self.system.total_memory();
+    }
+
+    fn publish_ws_state_update(&mut self) {
+        if self.last_ws_update.elapsed() >= Duration::from_millis(500) {
+            let workers = self.evolution_workers.lock().unwrap();
+            let state = WebsocketState {
+                cpu_usage: self.cpu_usage,
+                memory_usage: self.memory_usage,
+                total_memory: self.total_memory,
+                evolution_log: self.evolution_log.clone(),
+                evolution_current_generation: self.evolution_current_generation,
+                evolution_matches_completed: self.evolution_matches_completed,
+                evolution_total_matches: self.evolution_total_matches,
+                active_matches: self
+                    .active_matches
+                    .iter()
+                    .filter_map(|(id, m)| {
+                        m.board.as_ref().map(|board| {
+                            let fen: Fen = Fen::from_position(board, shakmaty::EnPassantMode::Legal);
+                            (
+                                *id,
+                                ActiveMatchState {
+                                    board: fen.to_string(),
+                                    white_player: m.white_player.clone(),
+                                    black_player: m.black_player.clone(),
+                                    san: m.san.clone(),
+                                    eval: m.eval,
+                                    material: m.material,
+                                },
+                            )
+                        })
+                    })
+                    .collect(),
+                evolution_workers: workers
+                    .iter()
+                    .map(|w| WorkerState {
+                        id: w.id,
+                        name: w.name.clone(),
+                        elapsed_time: w.start_time.elapsed().as_secs_f64(),
+                    })
+                    .collect(),
+            };
+            EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
+            self.last_ws_update = Instant::now();
+        }
     }
 
     async fn handle_events(&mut self) -> io::Result<()> {
@@ -194,6 +249,9 @@ impl App {
                 }
                 Event::ForceQuit => {
                     self.should_quit = true;
+                }
+                Event::WebsocketStateUpdate(_) => {
+                    // Ignore, this event is for the web client
                 }
             }
         }
