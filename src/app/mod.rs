@@ -98,15 +98,14 @@ impl App {
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events().await?;
 
-            if self.graceful_quit {
-                // Give the evolution thread time to finish gracefully
-                if let Some(handle) = &self.evolution_thread_handle {
-                    if handle.is_finished() {
-                        self.should_quit = true;
-                    }
+            if self.graceful_quit && self.active_matches.is_empty() {
+                // The graceful quit flag is set, and no matches are running.
+                // Now we can signal the main loop to quit and wait for the thread to save.
+                self.should_quit = true;
+                if let Some(handle) = self.evolution_thread_handle.take() {
+                    // Wait for the evolution thread to finish, which includes saving the final state.
+                    handle.join().unwrap();
                 }
-                // Add a small delay to prevent a busy-wait loop
-                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
         Ok(())
