@@ -126,6 +126,17 @@
             margin-top: 1em;
             flex-shrink: 0;
         }
+        #system-stats-container {
+            display: flex;
+            gap: 1em;
+            margin-bottom: 1em;
+        }
+        .system-stat {
+            border: 1px solid #6272a4;
+            padding: 0.5em;
+            flex: 1;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -134,6 +145,10 @@
             <div id="generation-status" class="status-gauge"></div>
             <div id="cpu-status" class="status-gauge"></div>
             <div id="mem-status" class="status-gauge"></div>
+        </div>
+
+        <div id="system-stats-container">
+            <!-- System stats will be dynamically inserted here -->
         </div>
 
         <div id="matches-container">
@@ -168,6 +183,7 @@
         ws.onmessage = (event) => {
             const state = JSON.parse(event.data);
             updateStatusBar(state);
+            updateSystemStats(state);
             updateMatches(state.active_matches);
             updateLog(state.evolution_log);
             updateWorkers(state.evolution_workers);
@@ -179,11 +195,15 @@
         function updateStatusBar(state) {
             // Generation Status
             const genDiv = document.getElementById('generation-status');
-            const progress = state.evolution_total_matches > 0 ? (state.evolution_matches_completed / state.evolution_total_matches) : 0;
-            genDiv.innerHTML = `
-                <div>Generation: ${state.evolution_current_generation} | Matches: ${state.evolution_matches_completed}/${state.evolution_total_matches}</div>
-                <progress value="${progress}" max="1"></progress>
-            `;
+            if (state.graceful_shutdown) {
+                genDiv.innerHTML = 'Graceful shutdown initiated. Waiting for matches to complete...';
+            } else {
+                const progress = state.evolution_total_matches > 0 ? (state.evolution_matches_completed / state.evolution_total_matches) : 0;
+                genDiv.innerHTML = `
+                    <div>Generation: ${state.evolution_current_generation} | Matches: ${state.evolution_matches_completed}/${state.evolution_total_matches}</div>
+                    <progress value="${progress}" max="1"></progress>
+                `;
+            }
 
             // CPU Status
             const cpuDiv = document.getElementById('cpu-status');
@@ -300,6 +320,28 @@
                 .join('');
         }
 
+        function updateSystemStats(state) {
+            const container = document.getElementById('system-stats-container');
+            container.innerHTML = '';
+
+            const cpuDiv = document.createElement('div');
+            cpuDiv.className = 'system-stat';
+            let cpuHtml = '<div><strong>CPU Core Usage</strong></div>';
+            state.cpus.forEach((cpu, index) => {
+                cpuHtml += `<div>Core ${index}: ${cpu.usage.toFixed(2)}%</div>`;
+            });
+            cpuDiv.innerHTML = cpuHtml;
+            container.appendChild(cpuDiv);
+
+            const tempDiv = document.createElement('div');
+            tempDiv.className = 'system-stat';
+            let tempHtml = '<div><strong>Component Temperatures</strong></div>';
+            state.components.forEach(component => {
+                tempHtml += `<div>${component.label}: ${component.temperature.toFixed(2)}°C</div>`;
+            });
+            tempDiv.innerHTML = tempHtml;
+            container.appendChild(tempDiv);
+        }
     </script>
 </body>
 </html>

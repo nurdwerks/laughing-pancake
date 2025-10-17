@@ -8,13 +8,27 @@ use shakmaty::{fen::Fen, Chess};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CpuState {
+    pub usage: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ComponentState {
+    pub label: String,
+    pub temperature: f32,
+}
+
 /// This struct contains the entire state of the application that the web UI needs to render.
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
+    pub graceful_shutdown: bool,
     // System info
     pub cpu_usage: f32,
     pub memory_usage: u64,
     pub total_memory: u64,
+    pub cpus: Vec<CpuState>,
+    pub components: Vec<ComponentState>,
     // Evolution state
     pub evolution_log: Vec<String>,
     pub evolution_current_generation: u32,
