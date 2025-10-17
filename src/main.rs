@@ -79,6 +79,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else if let Some(err) = app.error_message {
         println!("Application exited with an error: {err}");
         process::exit(1);
+    } else {
+        println!("Application exited gracefully. The run.sh script will restart it shortly.");
     }
 
     Ok(())

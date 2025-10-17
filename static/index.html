@@ -185,31 +185,38 @@
         let gitHash = null;
 
         function connect() {
+            console.log("Attempting to connect to WebSocket...");
             ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
 
+            ws.onopen = () => {
+                console.log("WebSocket connection established.");
+            };
+
             ws.onmessage = (event) => {
-                const state = JSON.parse(event.data);
+                const msg = JSON.parse(event.data);
 
-                if (gitHash === null) {
-                    gitHash = state.git_hash;
-                } else if (gitHash !== state.git_hash) {
-                    // Force refresh if the git hash has changed
-                    window.location.reload();
+                if (msg.type === 'State') {
+                    const state = msg.payload;
+                    if (gitHash === null) {
+                        gitHash = state.git_hash;
+                    } else if (gitHash !== state.git_hash) {
+                        console.log("Git hash changed, reloading page.");
+                        window.location.reload();
+                    }
+                    updateUi(state);
+                } else if (msg.type === 'Log') {
+                    appendLog(msg.payload);
                 }
-
-                updateStatusBar(state);
-                updateSystemStats(state);
-                updateMatches(state.active_matches);
-                updateLog(state.evolution_log);
-                updateWorkers(state.evolution_workers);
             };
 
             ws.onclose = () => {
+                console.log("WebSocket connection closed. Attempting to reconnect in 1 second...");
                 // Attempt to reconnect after a delay
                 setTimeout(connect, 1000);
             };
 
-            ws.onerror = () => {
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
                 ws.close();
             };
 
@@ -331,10 +338,29 @@
         }
 
 
-        function updateLog(log) {
+        function updateUi(state) {
+            updateStatusBar(state);
+            updateSystemStats(state);
+            updateMatches(state.active_matches);
+            updateWorkers(state.evolution_workers);
+        }
+
+        function appendLog(message) {
             const container = document.getElementById('log-content');
-            container.innerHTML = log.join('<br>');
-            container.scrollTop = container.scrollHeight;
+            const atBottom = container.scrollHeight - container.clientHeight <= container.scrollTop + 1;
+
+            const line = document.createElement('div');
+            line.innerHTML = message;
+            container.appendChild(line);
+
+            // Keep the log to a max of 100 entries
+            while (container.children.length > 100) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (atBottom) {
+                container.scrollTop = container.scrollHeight;
+            }
         }
 
         function updateWorkers(workers) {

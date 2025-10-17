@@ -19,7 +19,7 @@ pub struct ComponentState {
     pub temperature: f32,
 }
 
-/// This struct contains the entire state of the application that the web UI needs to render.
+// This struct contains the entire state of the application that the web UI needs to render.
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
     pub git_hash: String,
@@ -31,7 +31,6 @@ pub struct WebsocketState {
     pub cpus: Vec<CpuState>,
     pub components: Vec<ComponentState>,
     // Evolution state
-    pub evolution_log: Vec<String>,
     pub evolution_current_generation: u32,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
@@ -57,6 +56,15 @@ pub struct ActiveMatchState {
 }
 
 /// Defines all possible events that can occur in the application.
+#[derive(Clone, Debug, Message, Serialize)]
+#[rtype(result = "()")]
+#[serde(tag = "type", content = "payload")]
+pub enum WsMessage {
+    State(WebsocketState),
+    Log(String),
+}
+
+/// Defines all possible events that can occur in the application.
 #[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 pub enum Event {
@@ -69,6 +77,7 @@ pub enum Event {
     ThinkingUpdate(usize, String, i32),
     MovePlayed(usize, String, i32, Chess),
     StatusUpdate(String),
+    LogUpdate(String),
     Panic(String),
     RequestQuit,
     ForceQuit,

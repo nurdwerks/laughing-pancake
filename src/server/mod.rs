@@ -1,6 +1,6 @@
 // src/server/mod.rs
 
-use crate::event::{Event, EVENT_BROKER};
+use crate::event::{Event, WsMessage, EVENT_BROKER};
 use actix::{Actor, AsyncContext, Handler, StreamHandler};
 use actix_files as fs;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
@@ -30,8 +30,11 @@ impl Actor for MyWs {
 
         actix_rt::spawn(async move {
             while let Ok(event) = rx.recv().await {
-                if let Event::WebsocketStateUpdate(_) = event {
-                    addr.do_send(event);
+                match event {
+                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) => {
+                        addr.do_send(event);
+                    }
+                    _ => {} // Ignore other events
                 }
             }
         });
@@ -43,11 +46,14 @@ impl Handler<Event> for MyWs {
     type Result = ();
 
     fn handle(&mut self, msg: Event, ctx: &mut Self::Context) {
-        if let Event::WebsocketStateUpdate(state) = msg {
-            // Serialize the state to JSON and send it to the client.
-            if let Ok(json) = serde_json::to_string(&state) {
-                ctx.text(json);
-            }
+        let ws_msg = match msg {
+            Event::WebsocketStateUpdate(state) => WsMessage::State(state),
+            Event::LogUpdate(log) => WsMessage::Log(log),
+            _ => return, // Should not happen due to the filter in `started`
+        };
+
+        if let Ok(json) = serde_json::to_string(&ws_msg) {
+            ctx.text(json);
         }
     }
 }
