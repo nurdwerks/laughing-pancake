@@ -21,7 +21,8 @@ pub enum Event {
     MovePlayed(usize, String, i32, Chess), // Match index, SAN of the move, material difference, new board position
     StatusUpdate(String),
     Panic(String),
-    Quit,
+    RequestQuit,
+    ForceQuit,
 }
 
 /// The `EventBroker` is responsible for receiving events and broadcasting them to all subscribers.
@@ -78,7 +79,8 @@ impl fmt::Debug for Event {
             Event::MovePlayed(id, san, material, _) => write!(f, "MovePlayed(id: {id}, san: {san}, material: {material})"),
             Event::StatusUpdate(msg) => write!(f, "StatusUpdate({msg})"),
             Event::Panic(msg) => write!(f, "Panic({msg})"),
-            Event::Quit => write!(f, "Quit"),
+            Event::RequestQuit => write!(f, "RequestQuit"),
+            Event::ForceQuit => write!(f, "ForceQuit"),
         }
     }
 }
