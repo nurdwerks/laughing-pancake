@@ -12,117 +12,112 @@ use ratatui::widgets::{Gauge, Wrap};
 
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(9), // For status bar
-            Constraint::Min(0),    // For matches
-        ])
-        .split(frame.size());
-
-    draw_status_bar(frame, app, main_chunks[0]);
-    draw_evolve_screen(frame, app, main_chunks[1]);
-}
-
-fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),      // Top status bar
-            Constraint::Min(0),         // Main content area for matches
-            Constraint::Percentage(25), // Bottom area for Log and Workers
+            Constraint::Length(3),      // Status Bar
+            Constraint::Min(0),         // Matches Container
+            Constraint::Percentage(25), // Bottom Container
         ])
-        .split(area);
+        .split(frame.size());
 
-    // --- Top Status Bar ---
     draw_status_bar(frame, app, main_layout[0]);
+    draw_matches_container(frame, app, main_layout[1]);
+    draw_bottom_container(frame, app, main_layout[2]);
+}
 
-    // --- Main Content Area (Matches) ---
-    // Filter active matches to only include those that are currently running
+fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
     let active_matches: Vec<_> = app.active_matches.iter().filter(|(_, m)| m.board.is_some()).collect();
 
-    let num_matches = active_matches.len().max(1); // Avoid division by zero
+    let num_matches = active_matches.len().max(1);
     let match_constraints = vec![Constraint::Percentage(100 / num_matches as u16); num_matches];
     let content_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints(match_constraints)
-        .split(main_layout[1]);
+        .split(area);
 
-    // Sort matches by ID to ensure a consistent display order
     let mut sorted_matches = active_matches;
     sorted_matches.sort_by_key(|(id, _)| *id);
 
     for (i, (match_id, match_state)) in sorted_matches.iter().enumerate() {
-        let match_pane = content_layout[i];
-        let match_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(70), // Board
-                Constraint::Percentage(30), // SAN
-            ])
-            .split(match_pane);
+        let match_pane_area = content_layout[i];
+        draw_match_pane(frame, match_pane_area, *match_id, match_state);
+    }
+}
 
-        // Draw Board
-        let board_title = format!(
-            "Match {} | W: {} vs B: {}",
-            match_id,
-            match_state.white_player.split('.').next().unwrap_or(""),
-            match_state.black_player.split('.').next().unwrap_or("")
-        );
+fn draw_match_pane(frame: &mut Frame, area: Rect, match_id: &usize, match_state: &crate::app::ActiveMatch) {
+    let match_pane = Block::default().borders(Borders::ALL).title(format!(
+        "Match {}: {} vs {}",
+        match_id,
+        match_state.white_player.split('.').next().unwrap_or(""),
+        match_state.black_player.split('.').next().unwrap_or("")
+    ));
+    frame.render_widget(match_pane, area);
 
-        if let Some(board) = &match_state.board {
-            draw_board(frame, match_layout[0], board, &board_title);
-        } else {
-            let board_block = Block::default().borders(Borders::ALL).title(board_title);
-            frame.render_widget(board_block, match_layout[0]);
-        }
+    let inner_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0), // Board
+            Constraint::Length(5), // SAN
+        ])
+        .margin(1)
+        .split(area);
 
-        // Draw SAN Movelist
-        let san_widget = Paragraph::new(match_state.san.as_str())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!("SAN | Eval: {} | Material: {}", match_state.eval, match_state.material))
-            )
-            .wrap(Wrap { trim: true });
-        frame.render_widget(san_widget, match_layout[1]);
+    if let Some(board) = &match_state.board {
+        draw_board(frame, inner_layout[0], board, ""); // Title is handled by the pane
     }
 
-    // --- Bottom Pane (Log, Workers, and System Stats) ---
+    let san_widget = Paragraph::new(match_state.san.as_str())
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("SAN | Eval: {} | Material: {}", match_state.eval, match_state.material)),
+        )
+        .wrap(Wrap { trim: true });
+    frame.render_widget(san_widget, inner_layout[1]);
+}
+
+fn draw_bottom_container(frame: &mut Frame, app: &mut App, area: Rect) {
     let bottom_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Percentage(50), // Log
-            Constraint::Percentage(25), // Worker List
+            Constraint::Percentage(25), // Workers
             Constraint::Percentage(25), // System Stats
         ])
-        .split(main_layout[2]);
+        .split(area);
 
-    // --- Log View ---
-    let log_items: Vec<ListItem> = app
-        .evolution_log
-        .iter()
-        .map(|msg| ListItem::new(msg.as_str()))
-        .collect();
+    // Log View
+    let log_items: Vec<ListItem> = app.evolution_log.iter().map(|msg| ListItem::new(msg.as_str())).collect();
     let log_list = List::new(log_items)
         .block(Block::default().borders(Borders::ALL).title("Log"))
         .direction(ratatui::widgets::ListDirection::BottomToTop);
     frame.render_stateful_widget(log_list, bottom_layout[0], &mut app.evolution_log_state);
 
-    // --- Worker List ---
+    // Worker List
     draw_worker_list(frame, app, bottom_layout[1]);
 
-    // --- System Stats ---
+    // System Stats
     draw_system_stats_pane(frame, app, bottom_layout[2]);
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+            Constraint::Percentage(34),
+        ])
+        .split(area);
+
+    // Generation Status
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
     let progress_title = if app.graceful_quit {
-        "Graceful shutdown initiated...".to_string()
+        "Graceful shutdown...".to_string()
     } else {
         format!(
-            "Generation: {} | Matches: {}/{}",
+            "Gen: {} | Matches: {}/{}",
             app.evolution_current_generation,
             app.evolution_matches_completed,
             app.evolution_total_matches
@@ -131,8 +126,33 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let progress_bar = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title(progress_title))
         .gauge_style(Style::default().fg(Color::Green))
-        .percent((progress * 100.0) as u16);
-    frame.render_widget(progress_bar, area);
+        .percent((progress * 100.0).min(100.0) as u16);
+    frame.render_widget(progress_bar, status_chunks[0]);
+
+    // CPU Status
+    let cpu_usage = app.system.global_cpu_usage();
+    let cpu_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
+        .gauge_style(Style::default().fg(if cpu_usage > 80.0 { Color::Red } else { Color::Green }))
+        .percent(cpu_usage as u16)
+        .label(format!("{:.2}%", cpu_usage));
+    frame.render_widget(cpu_gauge, status_chunks[1]);
+
+    // Memory Status
+    let total_mem = app.system.total_memory();
+    let used_mem = app.system.used_memory();
+    let mem_percent = (used_mem as f64 / total_mem as f64) * 100.0;
+    let mem_label = format!(
+        "{:.2} / {:.2} GB",
+        used_mem as f64 / 1_073_741_824.0,
+        total_mem as f64 / 1_073_741_824.0
+    );
+    let mem_gauge = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title("Memory Usage"))
+        .gauge_style(Style::default().fg(if mem_percent > 80.0 { Color::Red } else { Color::Green }))
+        .percent(mem_percent as u16)
+        .label(mem_label);
+    frame.render_widget(mem_gauge, status_chunks[2]);
 }
 
 fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
