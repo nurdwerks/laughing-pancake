@@ -415,7 +415,7 @@ impl EvolutionManager {
             let workers = self.workers.clone();
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), None);
+                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), Some(match_id));
                     search_result_tx.send(search_result).unwrap();
                 });
 
