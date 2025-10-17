@@ -39,6 +39,7 @@ pub struct ActiveMatch {
 pub struct App {
     should_quit: bool,
     graceful_quit: bool,
+    pub should_restart: bool,
     pub error_message: Option<String>,
     // System info
     system: System,
@@ -67,6 +68,7 @@ impl App {
         Self {
             should_quit: false,
             graceful_quit: false,
+            should_restart: false,
             error_message: None,
             // System info
             system,
@@ -172,6 +174,9 @@ impl App {
                         KeyCode::Char('q') => {
                             self.should_quit = true;
                         }
+                        KeyCode::Char('r') => {
+                            EVENT_BROKER.publish(Event::RequestRestart);
+                        }
                         KeyCode::Up => {
                             let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_sub(1);
                             self.evolution_log_state.select(Some(new_selection));
@@ -248,6 +253,10 @@ impl App {
                     EVENT_BROKER.publish(Event::StatusUpdate("Graceful shutdown initiated. Waiting for current matches to complete...".to_string()));
                 }
                 Event::ForceQuit => {
+                    self.should_quit = true;
+                }
+                Event::RequestRestart => {
+                    self.should_restart = true;
                     self.should_quit = true;
                 }
                 Event::WebsocketStateUpdate(_) => {
