@@ -1,57 +1,93 @@
 // src/event/mod.rs
 
-use crate::ga::{Match};
-use shakmaty::{Chess};
-use tokio::sync::broadcast;
-use once_cell::sync::Lazy;
-use std::fmt;
-
+use crate::ga::Match;
 use actix::Message;
+use once_cell::sync::Lazy;
+use serde::Serialize;
+use shakmaty::{fen::Fen, Chess, Setup};
+use std::collections::HashMap;
+use tokio::sync::broadcast;
+
+/// This struct contains the entire state of the application that the web UI needs to render.
+#[derive(Clone, Debug, Serialize)]
+pub struct WebsocketState {
+    // System info
+    pub cpu_usage: f32,
+    pub memory_usage: u64,
+    pub total_memory: u64,
+    // Evolution state
+    pub evolution_log: Vec<String>,
+    pub evolution_current_generation: u32,
+    pub evolution_matches_completed: usize,
+    pub evolution_total_matches: usize,
+    pub active_matches: HashMap<usize, ActiveMatchState>,
+    pub evolution_workers: Vec<WorkerState>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct WorkerState {
+    pub id: u64,
+    pub name: String,
+    pub elapsed_time: f64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ActiveMatchState {
+    pub board: String, // FEN representation of the board
+    pub white_player: String,
+    pub black_player: String,
+    pub san: String,
+    pub eval: i32,
+    pub material: i32,
+}
 
 /// Defines all possible events that can occur in the application.
-/// These events are published by the backend and subscribed to by the frontend.
-#[derive(Clone, Message)]
+#[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 pub enum Event {
-    TournamentStart(usize, usize), // Total matches, skipped matches
+    WebsocketStateUpdate(WebsocketState),
+    // Events used by the TUI and backend logic
+    TournamentStart(usize, usize),
     GenerationStarted(u32),
-    MatchStarted(usize, String, String), // Match index, White player name, Black player name
-    MatchCompleted(usize, Match), // Match index, Match
-    ThinkingUpdate(usize, String, i32),  // Match index, Thinking message, evaluation
-    MovePlayed(usize, String, i32, Chess), // Match index, SAN of the move, material difference, new board position
+    MatchStarted(usize, String, String),
+    MatchCompleted(usize, Match),
+    ThinkingUpdate(usize, String, i32),
+    MovePlayed(usize, String, i32, Chess),
     StatusUpdate(String),
     Panic(String),
     RequestQuit,
     ForceQuit,
 }
 
-/// The `EventBroker` is responsible for receiving events and broadcasting them to all subscribers.
-/// It uses a `tokio::sync::broadcast` channel to allow multiple subscribers to listen for events.
+impl From<&Chess> for ActiveMatchState {
+    fn from(chess: &Chess) -> Self {
+        let fen: Fen = Fen::from_position(chess, shakmaty::EnPassantMode::Legal);
+        ActiveMatchState {
+            board: fen.to_string(),
+            white_player: String::new(),
+            black_player: String::new(),
+            san: String::new(),
+            eval: 0,
+            material: 0,
+        }
+    }
+}
+
 pub struct EventBroker {
     sender: broadcast::Sender<Event>,
 }
 
 impl EventBroker {
-    /// Creates a new `EventBroker`.
-    /// The `channel` method returns a `Sender` and `Receiver`.
-    /// The `Sender` is used to send events to the broker, and the `Receiver` is used to subscribe to events.
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(100);
         Self { sender }
     }
 
-    /// Publishes an event to all subscribers.
-    /// The `send` method returns the number of subscribers that received the event.
     pub fn publish(&self, event: Event) {
-        if self.sender.send(event).is_err() {
-            // This error occurs when there are no subscribers.
-            // In our design, it's possible for the backend to start publishing events before the TUI or web server has subscribed.
-            // Therefore, we can safely ignore this error.
-        }
+        // Ignore errors, as it's fine if there are no subscribers
+        let _ = self.sender.send(event);
     }
 
-    /// Creates a new subscriber to the event stream.
-    /// The `subscribe` method returns a `Receiver` that can be used to receive events.
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.sender.subscribe()
     }
@@ -63,24 +99,4 @@ impl Default for EventBroker {
     }
 }
 
-/// A global, lazily-initialized instance of the `EventBroker`.
-/// This allows any part of the application to publish events without needing to pass around a reference to the broker.
 pub static EVENT_BROKER: Lazy<EventBroker> = Lazy::new(EventBroker::new);
-
-// Implement `Debug` for `Event` so it can be easily printed for logging and debugging.
-impl fmt::Debug for Event {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Event::TournamentStart(total, skipped) => write!(f, "TournamentStart(total: {total}, skipped: {skipped})"),
-            Event::GenerationStarted(gen_index) => write!(f, "GenerationStarted(generation: {gen_index})"),
-            Event::MatchStarted(id, white, black) => write!(f, "MatchStarted(id: {id}, white: {white}, black: {black})"),
-            Event::MatchCompleted(id, game_match) => write!(f, "MatchCompleted(id: {id}, match: {game_match:?})"),
-            Event::ThinkingUpdate(id, pv, eval) => write!(f, "ThinkingUpdate(id: {id}, pv: {pv}, eval: {eval})"),
-            Event::MovePlayed(id, san, material, _) => write!(f, "MovePlayed(id: {id}, san: {san}, material: {material})"),
-            Event::StatusUpdate(msg) => write!(f, "StatusUpdate({msg})"),
-            Event::Panic(msg) => write!(f, "Panic({msg})"),
-            Event::RequestQuit => write!(f, "RequestQuit"),
-            Event::ForceQuit => write!(f, "ForceQuit"),
-        }
-    }
-}
