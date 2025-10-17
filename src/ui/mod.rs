@@ -151,12 +151,15 @@ fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
     let worker_items: Vec<ListItem> = {
         let workers = app.evolution_workers.lock().unwrap();
         let mut worker_vec: Vec<_> = workers.iter().collect();
+        // Sort by start_time ascending, so longest running are first
         worker_vec.sort_by_key(|w| w.start_time);
-        worker_vec.reverse();
-        worker_vec.iter().map(|w| {
-            let elapsed = w.start_time.elapsed();
-            ListItem::new(format!("{:.2?}: {}", elapsed, w.name))
-        }).collect()
+        worker_vec
+            .iter()
+            .map(|w| {
+                let elapsed = w.start_time.elapsed();
+                ListItem::new(format!("{:.2?}: {}", elapsed, w.name))
+            })
+            .collect()
     };
 
     let list = if worker_items.is_empty() {
