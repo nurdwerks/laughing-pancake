@@ -70,14 +70,15 @@ pub static EVENT_BROKER: Lazy<EventBroker> = Lazy::new(EventBroker::new);
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Event::TournamentStart(total, skipped) => write!(f, "TournamentStart(total: {}, skipped: {})", total, skipped),
-            Event::GenerationStarted(gen_index) => write!(f, "GenerationStarted(generation: {})", gen_index),
-            Event::MatchStarted(id, white, black) => write!(f, "MatchStarted(id: {}, white: {}, black: {})", id, white, black),
-            Event::MatchCompleted(id, game_match) => write!(f, "MatchCompleted(id: {}, match: {:?})", id, game_match),
-            Event::ThinkingUpdate(id, pv, eval) => write!(f, "ThinkingUpdate(id: {}, pv: {}, eval: {})", id, pv, eval),
-            Event::MovePlayed(id, san, material, _) => write!(f, "MovePlayed(id: {}, san: {}, material: {})", id, san, material),
-            Event::StatusUpdate(msg) => write!(f, "StatusUpdate({})", msg),
-            Event::Panic(msg) => write!(f, "Panic({})", msg),
+            Event::TournamentStart(total, skipped) => write!(f, "TournamentStart(total: {total}, skipped: {skipped})"),
+            Event::GenerationStarted(gen_index) => write!(f, "GenerationStarted(generation: {gen_index})"),
+            Event::MatchStarted(id, white, black) => write!(f, "MatchStarted(id: {id}, white: {white}, black: {black})"),
+            Event::MatchCompleted(id, game_match) => write!(f, "MatchCompleted(id: {id}, match: {game_match:?})"),
+            Event::ThinkingUpdate(id, pv, eval) => write!(f, "ThinkingUpdate(id: {id}, pv: {pv}, eval: {eval})"),
+            Event::MovePlayed(id, san, material, _) => write!(f, "MovePlayed(id: {id}, san: {san}, material: {material})"),
+            Event::StatusUpdate(msg) => write!(f, "StatusUpdate({msg})"),
+            Event::Panic(msg) => write!(f, "Panic({msg})"),
+            Event::Quit => write!(f, "Quit"),
         }
     }
 }
