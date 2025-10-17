@@ -8,9 +8,9 @@ mod server;
 use crate::app::App;
 use clap::Parser;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::DisableMouseCapture,
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{error::Error, panic, process, thread};

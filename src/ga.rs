@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -153,17 +153,16 @@ impl EvolutionManager {
             EVENT_BROKER.publish(Event::GenerationStarted(generation_index));
             let generation_dir = setup_directories(generation_index);
 
-            self.send_status(format!("Loading population for generation {generation_index}..."))?;
-            let mut population = Population::load(&generation_dir);
-            self.send_status(format!("Loaded {} individuals.", population.individuals.len()))?;
+            let base_population = Population::load(&generation_dir);
+            let mut generation = self.load_or_create_generation(generation_index, &base_population)?;
+            self.send_status(format!("Loaded {} individuals for generation {generation_index}.", generation.population.individuals.len()))?;
 
-            let mut generation = self.load_or_create_generation(generation_index, &population)?;
             let cache_manager = CacheManager::new();
 
-            self.run_tournament(&mut population, &mut generation, &cache_manager)?;
+            self.run_tournament(&mut generation, &cache_manager)?;
 
             let next_generation_dir = setup_directories(generation_index + 1);
-            self.evolve_population(&population, &next_generation_dir)?;
+            self.evolve_population(&generation.population, &next_generation_dir)?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
@@ -175,11 +174,12 @@ impl EvolutionManager {
             .join(format!("generation_{generation_index}.json"));
 
         if file_path.exists() {
-            let json = fs::read_to_string(&file_path);
-            if let Ok(json_content) = json {
-                let generation: Result<Generation, _> = serde_json::from_str(&json_content);
-                if let Ok(gen) = generation {
+            if let Ok(json_content) = fs::read_to_string(&file_path) {
+                if let Ok(mut gen) = serde_json::from_str::<Generation>(&json_content) {
                     self.send_status(format!("Successfully loaded existing match data for generation {generation_index}."))?;
+                    // Ensure the population loaded from the JSON is used, as it contains ELO scores.
+                    // The population passed in is the base from the individual files, without ELO updates.
+                    gen.population.individuals.sort_by_key(|i| i.id); // Ensure consistent order
                     return Ok(gen);
                 } else {
                     self.send_status(format!("Warning: Found corrupt generation file at {file_path:?}. Starting generation from scratch."))?;
@@ -190,18 +190,12 @@ impl EvolutionManager {
         }
 
         self.send_status(format!("No existing match data found for generation {generation_index}. Creating new tournament."))?;
-        let games = generate_pairings(population);
-        let matches = games.into_iter().map(|game| Match {
-            white_player_name: format!("individual_{}.json", game.white_player_id),
-            black_player_name: format!("individual_{}.json", game.black_player_id),
-            status: "pending".to_string(),
-            result: "".to_string(),
-            san: "".to_string(),
-        }).collect();
-
         Ok(Generation {
             generation_index,
-            matches,
+            round: 1,
+            population: population.clone(),
+            matches: Vec::new(),
+            previous_matchups: HashSet::new(),
         })
     }
 
@@ -211,17 +205,17 @@ impl EvolutionManager {
 
         // 1. Selection: Find the top 5 individuals
         let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
-        sorted_individuals.sort_by_key(|i| i.score);
-        sorted_individuals.reverse(); // Highest score first
+// Sort by ELO in descending order
+sorted_individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
         let elites = &sorted_individuals[0..5];
 
-        self.send_status("Top 5 Elites (by score):".to_string())?;
+self.send_status("Top 5 Elites (by ELO):".to_string())?;
         for (i, elite) in elites.iter().enumerate() {
             self.send_status(format!(
-                "{}. Individual {} (Score: {})",
+        "{}. Individual {} (ELO: {:.2})",
                 i + 1,
                 elite.id,
-                elite.score
+        elite.elo
             ))?;
         }
 
@@ -254,21 +248,109 @@ impl EvolutionManager {
         Ok(())
     }
 
-    /// Runs all the games in the tournament, saving progress after each game.
-    fn run_tournament(&self, population: &mut Population, generation: &mut Generation, cache_manager: &CacheManager) -> Result<(), ()> {
+/// Runs a 25-round tournament with ELO-based matchmaking.
+fn run_tournament(&self, generation: &mut Generation, cache_manager: &CacheManager) -> Result<(), ()> {
         self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
+    const NUM_ROUNDS: u32 = 25;
 
-        let matches_to_play: Vec<(usize, Match)> = generation.matches.iter().cloned().enumerate()
-            .filter(|(_, m)| m.status != "completed")
-            .collect();
-        let total_matches = generation.matches.len();
-        let skipped_matches = total_matches - matches_to_play.len();
-        self.send_status(format!("Skipping {skipped_matches} already completed games."))?;
-        EVENT_BROKER.publish(Event::TournamentStart(total_matches, skipped_matches));
+    for round in generation.round..=NUM_ROUNDS {
+        if *self.should_quit.lock().unwrap() {
+            self.send_status("Shutdown signal received, stopping tournament.".to_string())?;
+            break;
+        }
 
-        let (results_tx, results_rx) = crossbeam_channel::unbounded();
-        let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
-        let population_arc = Arc::new(population.clone());
+        generation.round = round;
+        self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
+
+        // 1. Generate Pairings for the current round using a Swiss-like system
+        let mut individuals_sorted = generation.population.individuals.clone();
+        individuals_sorted.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut round_matches = Vec::new();
+        let mut paired_ids = HashSet::new();
+
+        for i in 0..individuals_sorted.len() {
+            let p1_id = individuals_sorted[i].id;
+            if paired_ids.contains(&p1_id) {
+                continue;
+            }
+
+            let mut opponent_found = false;
+            for j in (i + 1)..individuals_sorted.len() {
+                let p2_id = individuals_sorted[j].id;
+                if paired_ids.contains(&p2_id) {
+                    continue;
+                }
+
+                let matchup = (p1_id.min(p2_id), p1_id.max(p2_id));
+                if !generation.previous_matchups.contains(&matchup) {
+                    round_matches.push(Match {
+                        white_player_name: format!("individual_{}.json", p1_id),
+                        black_player_name: format!("individual_{}.json", p2_id),
+                        status: "pending".to_string(), result: "".to_string(), san: "".to_string(),
+                    });
+                    generation.previous_matchups.insert(matchup);
+                    paired_ids.insert(p1_id);
+                    paired_ids.insert(p2_id);
+                    opponent_found = true;
+                    break;
+                }
+            }
+
+            // If no new opponent is found, find any available opponent for a rematch
+            if !opponent_found {
+                 for j in (i + 1)..individuals_sorted.len() {
+                    let p2_id = individuals_sorted[j].id;
+                    if !paired_ids.contains(&p2_id) {
+                         round_matches.push(Match {
+                            white_player_name: format!("individual_{}.json", p1_id),
+                            black_player_name: format!("individual_{}.json", p2_id),
+                            status: "pending".to_string(), result: "".to_string(), san: "".to_string(),
+                        });
+                        paired_ids.insert(p1_id);
+                        paired_ids.insert(p2_id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 2. Play the matches for the current round
+        self.play_round_matches(&round_matches, generation, cache_manager)?;
+
+        // 3. Save state after each round
+        save_generation(generation);
+        self.send_status(format!("Round {round} complete. Saved progress."))?;
+    }
+
+    // At the end of the tournament, print final ELOs.
+    generation.population.individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+    self.send_status("\n--- Final Tournament Standings ---".to_string())?;
+    for (rank, individual) in generation.population.individuals.iter().enumerate() {
+        self.send_status(format!(
+            "#{:<3} Individual {:<3} | ELO: {:.2}",
+            rank + 1,
+            individual.id,
+            individual.elo
+        ))?;
+    }
+    Ok(())
+}
+
+
+/// Plays a set of matches, updating population and generation state.
+fn play_round_matches(
+    &self,
+    matches_to_play: &[Match],
+    generation: &mut Generation,
+    cache_manager: &CacheManager,
+) -> Result<(), ()> {
+    let total_matches = matches_to_play.len();
+    EVENT_BROKER.publish(Event::TournamentStart(total_matches, 0)); // No skipped matches in this model
+
+    let (results_tx, results_rx) = crossbeam_channel::unbounded();
+    let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
+    let population_arc = Arc::new(generation.population.clone());
 
         // Spawn a pool of worker threads
         const NUM_WORKERS: usize = 3;
@@ -285,7 +367,6 @@ impl EvolutionManager {
                     let white_player_name = game_match.white_player_name.clone();
                     let black_player_name = game_match.black_player_name.clone();
 
-                    // The guards will be dropped at the end of the loop, releasing the caches.
                     let white_cache_guard = cache_manager_clone.get_cache_for_player(&white_player_name);
                     let black_cache_guard = cache_manager_clone.get_cache_for_player(&black_player_name);
 
@@ -296,10 +377,9 @@ impl EvolutionManager {
 
                     EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
                     if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
-                        if results_tx_clone.send((match_index, result, san)).is_err() {
-                            // Main thread has likely shut down, so we can exit.
-                            break;
-                        }
+                    results_tx_clone.send((game_match, result, san)).unwrap_or_else(|_| {
+                        // Log or handle error if receiver is dropped
+                    });
                     }
                 }
             });
@@ -307,47 +387,54 @@ impl EvolutionManager {
         }
 
         // Send all jobs to the workers
-        for (match_index, game_match) in matches_to_play.clone() {
+    for (i, game_match) in matches_to_play.iter().cloned().enumerate() {
             if *self.should_quit.lock().unwrap() {
-                self.send_status("Shutdown signal received, stopping new matches.".to_string())?;
                 break;
             }
-            if jobs_tx.send((match_index, game_match)).is_err() {
-                // This would happen if all worker threads panicked and the channel is closed.
-                break;
-            }
+        if jobs_tx.send((i, game_match)).is_err() {
+            // This would happen if all worker threads panicked and the channel is closed.
+            break;
         }
-        drop(jobs_tx); // Close the job channel to signal workers to exit when done
+        }
+    drop(jobs_tx);
 
-        // Drop the original results sender. The loop below will end when all worker threads
-        // have dropped their sender clones.
-        drop(results_tx);
+    drop(results_tx); // Drop original sender
 
         // Process results as they come in
-        for (match_index, result, san) in results_rx {
-            let mut current_match = generation.matches[match_index].clone();
+    for (mut current_match, result, san) in results_rx {
             current_match.san = san;
             current_match.status = "completed".to_string();
 
             let white_id = parse_id_from_name(&current_match.white_player_name);
             let black_id = parse_id_from_name(&current_match.black_player_name);
 
-            match result {
+        let new_white_elo;
+        let new_black_elo;
+        {
+            let population = &mut generation.population;
+            let white_elo = population.individuals.iter().find(|i| i.id == white_id).unwrap().elo;
+            let black_elo = population.individuals.iter().find(|i| i.id == black_id).unwrap().elo;
+
+            (new_white_elo, new_black_elo) = match result {
                 GameResult::WhiteWin => {
-                    population.individuals[white_id].score += 1;
-                    population.individuals[black_id].score -= 1;
                     current_match.result = "1-0".to_string();
+                    update_elo(white_elo, black_elo, 1.0)
                 }
                 GameResult::BlackWin => {
-                    population.individuals[white_id].score -= 1;
-                    population.individuals[black_id].score += 1;
                     current_match.result = "0-1".to_string();
+                    update_elo(white_elo, black_elo, 0.0)
                 }
                 GameResult::Draw => {
                     current_match.result = "1/2-1/2".to_string();
+                    update_elo(white_elo, black_elo, 0.5)
                 }
-            }
-            generation.matches[match_index] = current_match.clone();
+            };
+            population.individuals.iter_mut().find(|i| i.id == white_id).unwrap().elo = new_white_elo;
+            population.individuals.iter_mut().find(|i| i.id == black_id).unwrap().elo = new_black_elo;
+        }
+
+        let match_index = generation.matches.len();
+        generation.matches.push(current_match.clone());
             save_generation(generation);
             EVENT_BROKER.publish(Event::MatchCompleted(match_index, current_match));
         }
@@ -355,15 +442,6 @@ impl EvolutionManager {
         // Wait for all worker threads to finish
         for handle in worker_handles {
             handle.join().unwrap();
-        }
-
-        // Print final tournament results
-        self.send_status("\nTournament Results:".to_string())?;
-        for individual in &population.individuals {
-            self.send_status(format!(
-                "Individual {}: Score={}",
-                individual.id, individual.score
-            ))?;
         }
         Ok(())
     }
@@ -487,15 +565,16 @@ fn calculate_material_difference(pos: &Chess) -> i32 {
 }
 
 /// Represents a single AI candidate in the population.
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Individual {
     pub id: usize,
+    #[serde(flatten)]
     pub config: SearchConfig,
-    pub score: i32,
+    pub elo: f64,
 }
 
 /// Represents a collection of individuals for a single generation.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Population {
     pub individuals: Vec<Individual>,
 }
@@ -512,7 +591,7 @@ impl Population {
             individuals.push(Individual {
                 id: i,
                 config,
-                score: 0,
+                elo: 1200.0, // Starting ELO
             });
         }
         Self { individuals }
@@ -528,10 +607,45 @@ pub struct Match {
     pub san: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Generation {
     pub generation_index: u32,
+    pub round: u32,
+    pub population: Population,
     pub matches: Vec<Match>,
+    #[serde(with = "serde_helpers::hash_set_tuple_vec")]
+    pub previous_matchups: HashSet<(usize, usize)>,
+}
+
+// Helper for serializing HashSet<(A, B)>
+mod serde_helpers {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::HashSet;
+    use std::hash::Hash;
+
+    pub mod hash_set_tuple_vec {
+        use super::*;
+
+        pub fn serialize<A, B, S>(set: &HashSet<(A, B)>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            A: Serialize + Eq + Hash,
+            B: Serialize + Eq + Hash,
+            S: Serializer,
+        {
+            let vec: Vec<_> = set.iter().collect();
+            vec.serialize(serializer)
+        }
+
+        pub fn deserialize<'de, A, B, D>(deserializer: D) -> Result<HashSet<(A, B)>, D::Error>
+        where
+            A: Deserialize<'de> + Eq + Hash,
+            B: Deserialize<'de> + Eq + Hash,
+            D: Deserializer<'de>,
+        {
+            let vec: Vec<(A, B)> = Vec::deserialize(deserializer)?;
+            Ok(vec.into_iter().collect())
+        }
+    }
 }
 
 /// Saves the current state of a generation to a JSON file.
@@ -554,6 +668,27 @@ enum GameResult {
     WhiteWin,
     BlackWin,
     Draw,
+}
+
+/// Calculates the new ELO ratings for two players based on the game outcome.
+///
+/// # Arguments
+/// * `white_elo` - The ELO rating of the white player.
+/// * `black_elo` - The ELO rating of the black player.
+/// * `score` - The score of the white player (1.0 for a win, 0.5 for a draw, 0.0 for a loss).
+///
+/// # Returns
+/// A tuple containing the new ELO for white and black, respectively.
+fn update_elo(white_elo: f64, black_elo: f64, score: f64) -> (f64, f64) {
+    const K_FACTOR: f64 = 32.0;
+
+    let expected_score_white = 1.0 / (1.0 + 10.0f64.powf((black_elo - white_elo) / 400.0));
+    let expected_score_black = 1.0 - expected_score_white;
+
+    let new_white_elo = white_elo + K_FACTOR * (score - expected_score_white);
+    let new_black_elo = black_elo + K_FACTOR * ((1.0 - score) - expected_score_black);
+
+    (new_white_elo, new_black_elo)
 }
 
 /// Helper to extract the individual's ID from its filename.
@@ -708,22 +843,6 @@ fn find_latest_complete_generation() -> Option<u32> {
         .max()
 }
 
-/// Generates all pairings for a round-robin tournament where each player plays every other player twice.
-fn generate_pairings(population: &Population) -> Vec<Game> {
-    let mut games = Vec::new();
-    for i in 0..population.individuals.len() {
-        for j in 0..population.individuals.len() {
-            if i == j {
-                continue;
-            }
-            games.push(Game {
-                white_player_id: population.individuals[i].id,
-                black_player_id: population.individuals[j].id,
-            });
-        }
-    }
-    games
-}
 
 /// Creates the necessary directories for storing evolution data for a specific generation.
 fn setup_directories(generation_index: u32) -> PathBuf {
