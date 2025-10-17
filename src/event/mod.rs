@@ -4,7 +4,7 @@ use crate::ga::Match;
 use actix::Message;
 use once_cell::sync::Lazy;
 use serde::Serialize;
-use shakmaty::{fen::Fen, Chess, Setup};
+use shakmaty::{fen::Fen, Chess};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 

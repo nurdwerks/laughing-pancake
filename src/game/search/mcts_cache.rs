@@ -20,28 +20,11 @@ impl MctsCache {
         }
     }
 
-    pub fn from_map(map: HashMap<u64, MctsNodeData>) -> Self {
-        Self { table: map }
-    }
-
-    pub fn get_table(&self) -> &HashMap<u64, MctsNodeData> {
-        &self.table
-    }
-
     pub fn probe(&self, hash: &Zobrist64) -> Option<MctsNodeData> {
         self.table.get(&hash.0).copied()
     }
 
     pub fn store(&mut self, hash: Zobrist64, data: MctsNodeData) {
         self.table.insert(hash.0, data);
-    }
-
-    pub fn update(&mut self, hash: Zobrist64, wins: f64, visits: u32) {
-        let entry = self.table.entry(hash.0).or_insert(MctsNodeData {
-            wins: 0.0,
-            visits: 0,
-        });
-        entry.wins += wins;
-        entry.visits += visits;
     }
 }

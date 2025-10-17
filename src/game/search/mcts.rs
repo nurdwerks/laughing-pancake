@@ -11,7 +11,6 @@ use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
 use crate::app::Worker;
 use crate::event::Event;
-use std::any::Any;
 
 pub struct MctsSearcher {
     mcts_cache: Arc<Mutex<MctsCache>>,
@@ -29,10 +28,6 @@ impl MctsSearcher {
             mcts_cache: Arc::new(Mutex::new(MctsCache::new())),
         }
     }
-
-    pub fn with_shared_cache(cache: Arc<Mutex<MctsCache>>) -> Self {
-        Self { mcts_cache: cache }
-    }
 }
 
 impl Searcher for MctsSearcher {
@@ -48,9 +43,6 @@ impl Searcher for MctsSearcher {
         (best_move, score, Some(final_tree))
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 impl MctsSearcher {

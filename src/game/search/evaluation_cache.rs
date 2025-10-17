@@ -43,14 +43,6 @@ impl EvaluationCache {
         }
     }
 
-    pub fn from_map(map: HashMap<u64, i32>) -> Self {
-        Self { table: map }
-    }
-
-    pub fn get_table(&self) -> &HashMap<u64, i32> {
-        &self.table
-    }
-
     pub fn probe(&self, hash: &Zobrist64) -> Option<i32> {
         self.table.get(&hash.0).copied()
     }
