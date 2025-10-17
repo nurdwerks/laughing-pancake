@@ -2,7 +2,8 @@
 
 use crate::{
     event::{
-        ActiveMatchState, Event, WebsocketState, WorkerState, EVENT_BROKER,
+        ActiveMatchState, ComponentState, CpuState, Event, WebsocketState, WorkerState,
+        EVENT_BROKER,
     },
     ga, ui,
 };
@@ -36,12 +37,15 @@ pub struct ActiveMatch {
     pub material: i32,
 }
 
+use sysinfo::{Components};
+
 pub struct App {
     should_quit: bool,
-    graceful_quit: bool,
+    pub graceful_quit: bool,
     pub error_message: Option<String>,
     // System info
-    system: System,
+    pub system: System,
+    pub components: Components,
     pub cpu_usage: f32,
     pub memory_usage: u64,
     pub total_memory: u64,
@@ -71,6 +75,7 @@ impl App {
             error_message: None,
             // System info
             system,
+            components: Components::new_with_refreshed_list(),
             cpu_usage: 0.0,
             memory_usage: 0,
             total_memory: 0,
@@ -114,6 +119,7 @@ impl App {
     fn update_system_stats(&mut self) {
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
+        self.components.refresh(true);
         self.cpu_usage = self.system.global_cpu_usage();
         self.memory_usage = self.system.used_memory();
         self.total_memory = self.system.total_memory();
@@ -123,9 +129,24 @@ impl App {
         if self.last_ws_update.elapsed() >= Duration::from_millis(500) {
             let workers = self.evolution_workers.lock().unwrap();
             let state = WebsocketState {
+                graceful_shutdown: self.graceful_quit,
                 cpu_usage: self.cpu_usage,
                 memory_usage: self.memory_usage,
                 total_memory: self.total_memory,
+                cpus: self
+                    .system
+                    .cpus()
+                    .iter()
+                    .map(|c| CpuState { usage: c.cpu_usage() })
+                    .collect(),
+                components: self
+                    .components
+                    .iter()
+                    .map(|c| ComponentState {
+                        label: c.label().to_string(),
+                        temperature: c.temperature().unwrap_or(0.0),
+                    })
+                    .collect(),
                 evolution_log: self.evolution_log.clone(),
                 evolution_current_generation: self.evolution_current_generation,
                 evolution_matches_completed: self.evolution_matches_completed,

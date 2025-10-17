@@ -12,10 +12,19 @@ use ratatui::widgets::{Gauge, Wrap};
 
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    draw_evolve_screen(frame, app)
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(9), // For status bar
+            Constraint::Min(0),    // For matches
+        ])
+        .split(frame.size());
+
+    draw_status_bar(frame, app, main_chunks[0]);
+    draw_evolve_screen(frame, app, main_chunks[1]);
 }
 
-fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
+fn draw_evolve_screen(frame: &mut Frame, app: &mut App, area: Rect) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -105,24 +114,38 @@ fn draw_evolve_screen(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let top_bar_layout = Layout::default()
-        .direction(Direction::Horizontal)
+    let status_chunks = Layout::default()
+        .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(34), // Generation Progress
-            Constraint::Percentage(33), // CPU Usage
-            Constraint::Percentage(33), // Memory Usage
+            Constraint::Length(3), // Top row for gauges
+            Constraint::Length(1), // Spacer
+            Constraint::Min(0),    // Bottom row for text stats
         ])
         .split(area);
 
+    let top_bar_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(status_chunks[0]);
+
     // Generation Progress
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
-    let progress_bar = Gauge::default()
-        .block(Block::default().borders(Borders::ALL).title(format!(
+    let progress_title = if app.graceful_quit {
+        "Graceful shutdown initiated...".to_string()
+    } else {
+        format!(
             "Generation: {} | Matches: {}/{}",
             app.evolution_current_generation,
             app.evolution_matches_completed,
             app.evolution_total_matches
-        )))
+        )
+    };
+    let progress_bar = Gauge::default()
+        .block(Block::default().borders(Borders::ALL).title(progress_title))
         .gauge_style(Style::default().fg(Color::Green))
         .percent((progress * 100.0) as u16);
     frame.render_widget(progress_bar, top_bar_layout[0]);
@@ -144,6 +167,38 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .label(format!("{mem_usage_gb:.2}/{mem_total_gb:.2} GB"))
         .percent(mem_percentage as u16);
     frame.render_widget(mem_gauge, top_bar_layout[2]);
+
+    // System Stats Text
+    let text_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(status_chunks[2]);
+
+    // CPU Core Usage
+    let cpu_text: Vec<Span> = app
+        .system
+        .cpus()
+        .iter()
+        .map(|cpu| Span::raw(format!("Core {}: {:.2}% ", app.system.cpus().iter().position(|c| c.name() == cpu.name()).unwrap_or(0), cpu.cpu_usage())))
+        .collect();
+    let cpu_paragraph = Paragraph::new(Line::from(cpu_text))
+        .block(Block::default().borders(Borders::ALL).title("CPU Core Usage"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(cpu_paragraph, text_chunks[0]);
+
+    // Component Temperatures
+    let temp_text: Vec<Span> = app
+        .components
+        .iter()
+        .map(|c| {
+            let temp = c.temperature().map(|t| format!("{:.2}°C", t)).unwrap_or_else(|| "N/A".to_string());
+            Span::raw(format!("{}: {} ", c.label(), temp))
+        })
+        .collect();
+    let temp_paragraph = Paragraph::new(Line::from(temp_text))
+        .block(Block::default().borders(Borders::ALL).title("Temperatures"))
+        .wrap(Wrap { trim: true });
+    frame.render_widget(temp_paragraph, text_chunks[1]);
 }
 
 fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
