@@ -98,11 +98,20 @@ impl Drop for CacheGuard {
 pub struct EvolutionManager {
     workers: Arc<Mutex<Vec<Worker>>>,
     should_quit: Arc<Mutex<bool>>,
+    match_id_counter: Arc<Mutex<usize>>,
 }
 
 impl EvolutionManager {
-    pub fn new(workers: Arc<Mutex<Vec<Worker>>>, should_quit: Arc<Mutex<bool>>) -> Self {
-        Self { workers, should_quit }
+    pub fn new(
+        workers: Arc<Mutex<Vec<Worker>>>,
+        should_quit: Arc<Mutex<bool>>,
+        match_id_counter: Arc<Mutex<usize>>,
+    ) -> Self {
+        Self {
+            workers,
+            should_quit,
+            match_id_counter,
+        }
     }
 
     fn send_status(&self, message: String) -> Result<(), ()> {
@@ -377,9 +386,9 @@ fn play_round_matches(
 
                     EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
                     if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
-                    results_tx_clone.send((game_match, result, san)).unwrap_or_else(|_| {
-                        // Log or handle error if receiver is dropped
-                    });
+                        results_tx_clone.send((match_index, game_match, result, san)).unwrap_or_else(|_| {
+                            // Log or handle error if receiver is dropped
+                        });
                     }
                 }
             });
@@ -387,21 +396,24 @@ fn play_round_matches(
         }
 
         // Send all jobs to the workers
-    for (i, game_match) in matches_to_play.iter().cloned().enumerate() {
+    for game_match in matches_to_play.iter().cloned() {
             if *self.should_quit.lock().unwrap() {
                 break;
             }
-        if jobs_tx.send((i, game_match)).is_err() {
-            // This would happen if all worker threads panicked and the channel is closed.
-            break;
-        }
+            let mut counter = self.match_id_counter.lock().unwrap();
+            let match_id = *counter;
+            *counter += 1;
+            if jobs_tx.send((match_id, game_match)).is_err() {
+                // This would happen if all worker threads panicked and the channel is closed.
+                break;
+            }
         }
     drop(jobs_tx);
 
     drop(results_tx); // Drop original sender
 
         // Process results as they come in
-    for (mut current_match, result, san) in results_rx {
+    for (match_index, mut current_match, result, san) in results_rx {
             current_match.san = san;
             current_match.status = "completed".to_string();
 
@@ -433,7 +445,6 @@ fn play_round_matches(
             population.individuals.iter_mut().find(|i| i.id == black_id).unwrap().elo = new_black_elo;
         }
 
-        let match_index = generation.matches.len();
         generation.matches.push(current_match.clone());
             save_generation(generation);
             EVENT_BROKER.publish(Event::MatchCompleted(match_index, current_match));

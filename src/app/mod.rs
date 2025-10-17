@@ -60,6 +60,7 @@ pub struct App {
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     evolution_should_quit: Arc<Mutex<bool>>,
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
+    match_id_counter: Arc<Mutex<usize>>,
     // Websocket state
     last_ws_update: Instant,
     git_hash: String,
@@ -91,6 +92,7 @@ impl App {
             evolution_thread_handle: None,
             evolution_should_quit: Arc::new(Mutex::new(false)),
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
+            match_id_counter: Arc::new(Mutex::new(0)),
             // Websocket state
             last_ws_update: Instant::now(),
             git_hash,
@@ -133,7 +135,6 @@ impl App {
         }
 
         let workers_arc = self.evolution_workers.clone();
-        let evolution_log = self.evolution_log.clone();
         let active_matches = self.active_matches.clone();
         let state_clone = self.clone_state_for_websocket();
 
@@ -147,7 +148,6 @@ impl App {
                 total_memory: state_clone.total_memory,
                 cpus: state_clone.cpus,
                 components: state_clone.components,
-                evolution_log,
                 evolution_current_generation: state_clone.evolution_current_generation,
                 evolution_matches_completed: state_clone.evolution_matches_completed,
                 evolution_total_matches: state_clone.evolution_total_matches,
@@ -242,8 +242,7 @@ impl App {
                         _ => "Unknown result".to_string(),
                     };
                     let log_message = format!("[Match {match_id}] Complete: {result_str}.");
-                    self.evolution_log.push(log_message);
-                    self.autoscroll_log();
+                    self.log_message(log_message);
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
@@ -258,8 +257,7 @@ impl App {
                     }
                 }
                 Event::StatusUpdate(message) => {
-                    self.evolution_log.push(message);
-                    self.autoscroll_log();
+                    self.log_message(message);
                 }
                 Event::Panic(msg) => {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
@@ -274,7 +272,7 @@ impl App {
                     *self.evolution_should_quit.lock().unwrap() = true;
                     self.should_quit = true;
                 }
-                Event::WebsocketStateUpdate(_) => {
+                Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) => {
                     // Ignore, this event is for the web client
                 }
             }
@@ -286,11 +284,21 @@ impl App {
         let evolution_manager = ga::EvolutionManager::new(
             self.evolution_workers.clone(),
             self.evolution_should_quit.clone(),
+            self.match_id_counter.clone(),
         );
         let handle = thread::spawn(move || {
             evolution_manager.run();
         });
         self.evolution_thread_handle = Some(handle);
+    }
+
+    fn log_message(&mut self, message: String) {
+        // Publish to web clients
+        EVENT_BROKER.publish(Event::LogUpdate(message.clone()));
+
+        // Also add to the TUI log
+        self.evolution_log.push(message);
+        self.autoscroll_log();
     }
 
     fn autoscroll_log(&mut self) {
@@ -325,7 +333,6 @@ impl App {
                     temperature: c.temperature().unwrap_or(0.0),
                 })
                 .collect(),
-            evolution_log: Vec::new(), // This is cloned separately
             evolution_current_generation: self.evolution_current_generation,
             evolution_matches_completed: self.evolution_matches_completed,
             evolution_total_matches: self.evolution_total_matches,
