@@ -1,8 +1,6 @@
-   Compiling rust-chess-tui v0.1.0 (/app)
-warning: struct `Game` is never constructed
-   --> src/ga.rs:684:8
-    |
-684 | struct Game {
-    |        ^^^^
-    |
-    = note: `#[warn(dead_code)]` on by default
+   Compiling proc-macro2 v1.0.101
+   Compiling unicode-ident v1.0.19
+   Compiling quote v1.0.41
+   Compiling libc v0.2.177
+   Compiling cfg-if v1.0.4
+   Compiling log v0.4.28

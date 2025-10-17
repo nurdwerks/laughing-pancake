@@ -233,8 +233,9 @@
                 genDiv.innerHTML = 'Graceful shutdown initiated. Waiting for matches to complete...';
             } else {
                 const progress = state.evolution_total_matches > 0 ? (state.evolution_matches_completed / state.evolution_total_matches) : 0;
+                const round_text = state.evolution_total_rounds > 0 ? `R: ${state.evolution_current_round}/${state.evolution_total_rounds}` : '';
                 genDiv.innerHTML = `
-                    <div>Generation: ${state.evolution_current_generation} | Matches: ${state.evolution_matches_completed}/${state.evolution_total_matches}</div>
+                    <div>G: ${state.evolution_current_generation} | ${round_text} | M: ${state.evolution_matches_completed}/${state.evolution_total_matches}</div>
                     <progress value="${progress}" max="1"></progress>
                 `;
             }

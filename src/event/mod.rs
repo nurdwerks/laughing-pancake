@@ -32,6 +32,7 @@ pub struct WebsocketState {
     // Evolution state
     pub evolution_current_generation: u32,
     pub evolution_current_round: usize,
+    pub evolution_total_rounds: u32,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatchState>,

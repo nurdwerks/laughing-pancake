@@ -1,6 +1,7 @@
 // app/mod.rs
 
 use crate::{
+    constants::NUM_ROUNDS,
     event::{
         ActiveMatchState, ComponentState, CpuState, Event, WebsocketState, WorkerState,
         EVENT_BROKER,
@@ -136,54 +137,8 @@ impl App {
             return;
         }
 
-        let workers_arc = self.evolution_workers.clone();
-        let active_matches = self.active_matches.clone();
-        let state_clone = self.clone_state_for_websocket();
-
-        tokio::spawn(async move {
-            let workers = workers_arc.lock().unwrap();
-            let state = WebsocketState {
-                git_hash: state_clone.git_hash,
-                graceful_shutdown: state_clone.graceful_shutdown,
-                cpu_usage: state_clone.cpu_usage,
-                memory_usage: state_clone.memory_usage,
-                total_memory: state_clone.total_memory,
-                cpus: state_clone.cpus,
-                components: state_clone.components,
-                evolution_current_generation: state_clone.evolution_current_generation,
-                evolution_current_round: state_clone.evolution_current_round,
-                evolution_matches_completed: state_clone.evolution_matches_completed,
-                evolution_total_matches: state_clone.evolution_total_matches,
-                active_matches: active_matches
-                    .iter()
-                    .filter_map(|(id, m)| {
-                        m.board.as_ref().map(|board| {
-                            let fen: Fen = Fen::from_position(board, shakmaty::EnPassantMode::Legal);
-                            (
-                                *id,
-                                ActiveMatchState {
-                                    board: fen.to_string(),
-                                    white_player: m.white_player.clone(),
-                                    black_player: m.black_player.clone(),
-                                    san: m.san.clone(),
-                                    eval: m.eval,
-                                    material: m.material,
-                                },
-                            )
-                        })
-                    })
-                    .collect(),
-                evolution_workers: workers
-                    .iter()
-                    .map(|w| WorkerState {
-                        id: w.id,
-                        name: w.name.clone(),
-                        elapsed_time: w.start_time.elapsed().as_secs_f64(),
-                    })
-                    .collect(),
-            };
-            EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
-        });
+        let state = self.get_websocket_state();
+        EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
 
         self.last_ws_update = Instant::now();
     }
@@ -321,7 +276,8 @@ impl App {
         self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 
-    fn clone_state_for_websocket(&self) -> WebsocketState {
+    fn get_websocket_state(&self) -> WebsocketState {
+        let workers = self.evolution_workers.lock().unwrap();
         WebsocketState {
             git_hash: self.git_hash.clone(),
             graceful_shutdown: self.graceful_quit,
@@ -346,10 +302,37 @@ impl App {
                 .collect(),
             evolution_current_generation: self.evolution_current_generation,
             evolution_current_round: self.evolution_current_round,
+            evolution_total_rounds: NUM_ROUNDS,
             evolution_matches_completed: self.evolution_matches_completed,
             evolution_total_matches: self.evolution_total_matches,
-            active_matches: HashMap::new(), // This is cloned separately
-            evolution_workers: Vec::new(),   // This is cloned separately
+            active_matches: self
+                .active_matches
+                .iter()
+                .filter_map(|(id, m)| {
+                    m.board.as_ref().map(|board| {
+                        let fen: Fen = Fen::from_position(board, shakmaty::EnPassantMode::Legal);
+                        (
+                            *id,
+                            ActiveMatchState {
+                                board: fen.to_string(),
+                                white_player: m.white_player.clone(),
+                                black_player: m.black_player.clone(),
+                                san: m.san.clone(),
+                                eval: m.eval,
+                                material: m.material,
+                            },
+                        )
+                    })
+                })
+                .collect(),
+            evolution_workers: workers
+                .iter()
+                .map(|w| WorkerState {
+                    id: w.id,
+                    name: w.name.clone(),
+                    elapsed_time: w.start_time.elapsed().as_secs_f64(),
+                })
+                .collect(),
         }
     }
 }
