@@ -4,6 +4,7 @@ use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Error};
 use actix_web_actors::ws;
 use crate::event::{EVENT_BROKER};
+use actix_files as fs;
 
 /// The main entry point for the web server.
 /// This function will be called from `main.rs` to start the server.
@@ -11,6 +12,7 @@ pub async fn start_server() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .route("/ws", web::get().to(ws_index))
+            .service(fs::Files::new("/", "./static").index_file("index.html"))
     })
     .bind("127.0.0.1:8080")?
     .run()
