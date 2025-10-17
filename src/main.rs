@@ -2,8 +2,10 @@ mod app;
 mod ui;
 mod game;
 mod ga;
+mod event;
+mod server;
 
-use crate::app::{App, TuiMakeWriter};
+use crate::app::{App};
 use clap::Parser;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
@@ -12,7 +14,6 @@ use crossterm::{
 };
 use ratatui::{prelude::CrosstermBackend, Terminal};
 use std::{error::Error, io, panic};
-use tracing_subscriber::{fmt, prelude::*};
 
 
 #[derive(Parser, Debug)]
@@ -28,21 +29,22 @@ struct Args {
 }
 
 #[cfg(not(test))]
-fn main() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let _args = Args::parse();
 
-    // setup tracing
-    let (log_tx, log_rx) = crossbeam_channel::unbounded();
-    *app::TUI_WRITER_SENDER.lock().unwrap() = Some(log_tx);
-    tracing_subscriber::registry()
-        .with(fmt::layer().with_writer(TuiMakeWriter::new).with_filter(tracing_subscriber::filter::LevelFilter::INFO))
-        .init();
+    // Start the server in a new thread
+    tokio::spawn(async {
+        if let Err(e) = server::start_server().await {
+            eprintln!("Server error: {}", e);
+        }
+    });
 
     panic::set_hook(Box::new(|info| {
         let payload = info.payload().downcast_ref::<&str>().unwrap_or(&"");
         let location = info.location().unwrap();
         let msg = format!("panic occurred: {payload}, location: {location}");
-        tracing::error!("{}", msg);
+        eprintln!("{}", msg);
     }));
 
 
@@ -54,8 +56,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let mut app = App::new(args.tablebase_path, args.opening_book, log_rx);
-    let res = app.run(&mut terminal);
+    let mut app = App::new();
+    let res = app.run(&mut terminal).await;
 
     // restore terminal
     disable_raw_mode()?;

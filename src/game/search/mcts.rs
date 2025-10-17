@@ -10,7 +10,7 @@ use shakmaty::{Chess, Move, Position, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
 use crate::app::Worker;
-use crate::ga::EvolutionUpdate;
+use crate::event::Event;
 use std::any::Any;
 
 pub struct MctsSearcher {
@@ -42,7 +42,7 @@ impl Searcher for MctsSearcher {
         _depth: u8,
         config: &SearchConfig,
         _workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        _update_sender: Option<Sender<EvolutionUpdate>>,
+        _update_sender: Option<Sender<Event>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         let (best_move, score, final_tree) = self.mcts(pos, config.mcts_simulations, config);
         (best_move, score, Some(final_tree))

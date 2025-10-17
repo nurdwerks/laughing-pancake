@@ -10,23 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
-use crossbeam_channel::{Sender, unbounded};
+use crate::event::{Event, EVENT_BROKER};
 
 const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
 const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
-#[derive(Debug, Clone)]
-pub enum EvolutionUpdate {
-    TournamentStart(usize, usize), // Total matches, skipped matches
-    GenerationStarted(u32),
-    MatchStarted(usize, String, String), // Match index, White player name, Black player name
-    MatchCompleted(usize, Match), // Match index, Match
-    ThinkingUpdate(usize, String, i32),  // Match index, Thinking message, evaluation
-    MovePlayed(usize, String, i32, Chess), // Match index, SAN of the move, material difference, new board position
-    StatusUpdate(String),
-    Panic(String),
-}
 /// Manages evaluation caches for all players in the tournament.
 /// Caches are created on-demand and automatically destroyed when no longer in use.
 struct CacheManager {
@@ -107,19 +96,16 @@ impl Drop for CacheGuard {
 /// Manages the evolution process in a background thread.
 #[derive(Clone)]
 pub struct EvolutionManager {
-    update_sender: Sender<EvolutionUpdate>,
     workers: Arc<Mutex<Vec<Worker>>>,
 }
 
 impl EvolutionManager {
-    pub fn new(update_sender: Sender<EvolutionUpdate>, workers: Arc<Mutex<Vec<Worker>>>) -> Self {
-        Self { update_sender, workers }
+    pub fn new(workers: Arc<Mutex<Vec<Worker>>>) -> Self {
+        Self { workers }
     }
 
     fn send_status(&self, message: String) -> Result<(), ()> {
-        if self.update_sender.send(EvolutionUpdate::StatusUpdate(message)).is_err() {
-            return Err(());
-        }
+        EVENT_BROKER.publish(Event::StatusUpdate(message));
         Ok(())
     }
 
@@ -138,7 +124,7 @@ impl EvolutionManager {
             } else {
                 "Unknown panic!".to_string()
             };
-            let _ = self.update_sender.send(EvolutionUpdate::Panic(panic_msg));
+            EVENT_BROKER.publish(Event::Panic(panic_msg));
         }
     }
 
@@ -159,7 +145,7 @@ impl EvolutionManager {
 
         loop {
             self.send_status(format!("--- Starting Generation {generation_index} ---"))?;
-            self.update_sender.send(EvolutionUpdate::GenerationStarted(generation_index)).map_err(|_| ())?;
+            EVENT_BROKER.publish(Event::GenerationStarted(generation_index));
             let generation_dir = setup_directories(generation_index);
 
             self.send_status(format!("Loading population for generation {generation_index}..."))?;
@@ -273,10 +259,10 @@ impl EvolutionManager {
         let total_matches = generation.matches.len();
         let skipped_matches = total_matches - matches_to_play.len();
         self.send_status(format!("Skipping {skipped_matches} already completed games."))?;
-        self.update_sender.send(EvolutionUpdate::TournamentStart(total_matches, skipped_matches)).map_err(|_| ())?;
+        EVENT_BROKER.publish(Event::TournamentStart(total_matches, skipped_matches));
 
-        let (results_tx, results_rx) = unbounded();
-        let (jobs_tx, jobs_rx) = unbounded::<(usize, Match)>();
+        let (results_tx, results_rx) = crossbeam_channel::unbounded();
+        let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
         let population_arc = Arc::new(population.clone());
 
         // Spawn a pool of worker threads
@@ -287,7 +273,6 @@ impl EvolutionManager {
             let results_tx_clone = results_tx.clone();
             let population_clone = Arc::clone(&population_arc);
             let cache_manager_clone = cache_manager.clone();
-            let sender_clone = self.update_sender.clone();
             let self_clone = self.clone();
 
             let handle = std::thread::spawn(move || {
@@ -304,7 +289,7 @@ impl EvolutionManager {
                     let white_config = &population_clone.individuals[white_id].config;
                     let black_config = &population_clone.individuals[black_id].config;
 
-                    let _ = sender_clone.send(EvolutionUpdate::MatchStarted(match_index, white_player_name, black_player_name));
+                    EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
                     if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
                         if results_tx_clone.send((match_index, result, san)).is_err() {
                             // Main thread has likely shut down, so we can exit.
@@ -355,7 +340,7 @@ impl EvolutionManager {
             }
             generation.matches[match_index] = current_match.clone();
             save_generation(generation);
-            self.update_sender.send(EvolutionUpdate::MatchCompleted(match_index, current_match)).map_err(|_| ()).unwrap();
+            EVENT_BROKER.publish(Event::MatchCompleted(match_index, current_match));
         }
 
         // Wait for all worker threads to finish
@@ -416,20 +401,19 @@ impl EvolutionManager {
             let (search_result_tx, search_result_rx) = crossbeam_channel::unbounded();
 
             let thinking_msg = format!("AI is thinking for {:?}...", current_pos.turn());
-            self.update_sender.send(EvolutionUpdate::ThinkingUpdate(match_id, thinking_msg, 0)).map_err(|_| ())?;
+            EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, thinking_msg, 0));
 
             let workers = self.workers.clone();
-            let update_sender = self.update_sender.clone();
             crossbeam_utils::thread::scope(|s| {
                 s.spawn(|_| {
-                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), Some(update_sender));
+                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), None);
                     search_result_tx.send(search_result).unwrap();
                 });
 
                 crossbeam_channel::select! {
                     recv(search_result_rx) -> msg => {
                         if let Ok((best_move, eval, _final_tree)) = msg {
-                            let _ = self.update_sender.send(EvolutionUpdate::ThinkingUpdate(match_id, format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
+                            EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
                             if let Some(m) = best_move {
                                 let san = SanPlus::from_move(pos.clone(), m);
                                 sans.push(san);
@@ -437,9 +421,7 @@ impl EvolutionManager {
 
                                 let material_diff = calculate_material_difference(&pos);
                                 let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
-                                if self.update_sender.send(EvolutionUpdate::MovePlayed(match_id, last_san, material_diff, pos.clone())).is_err() {
-                                    // The error will be handled by the outer loop's break condition.
-                                }
+                                EVENT_BROKER.publish(Event::MovePlayed(match_id, last_san, material_diff, pos.clone()));
                             }
                         }
                     }

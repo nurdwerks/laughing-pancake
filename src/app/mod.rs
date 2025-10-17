@@ -1,44 +1,18 @@
 // app/mod.rs
 
-use crate::{ga::{self, EvolutionUpdate}};
-use crate::ui;
-use crossterm::event::{self, Event, KeyCode};
-use lazy_static::lazy_static;
-use std::collections::HashMap;
-use std::sync::{Mutex, Arc};
-use ratatui::{prelude::*, Terminal, widgets::ListState};
-use shakmaty::{Chess};
-use std::io;
-use std::thread;
-use std::time::{Duration, Instant};
-use crossbeam_channel::{unbounded, Sender, Receiver};
+use crate::{event::{Event, EVENT_BROKER}, ga, ui};
+use crossterm::event::{self, KeyCode};
+use ratatui::{prelude::*, widgets::ListState, Terminal};
+use shakmaty::Chess;
+use std::{
+    collections::HashMap,
+    io,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
 use sysinfo::System;
-
-lazy_static! {
-    pub static ref TUI_WRITER_SENDER: Mutex<Option<Sender<String>>> = Mutex::new(None);
-}
-
-pub struct TuiMakeWriter;
-
-impl TuiMakeWriter {
-    pub fn new() -> Self {
-        TuiMakeWriter
-    }
-}
-
-impl io::Write for TuiMakeWriter {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let msg = String::from_utf8_lossy(buf).to_string();
-        if let Some(sender) = TUI_WRITER_SENDER.lock().unwrap().as_ref() {
-            sender.send(msg).unwrap();
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
+use tokio::sync::broadcast;
 
 #[derive(Clone)]
 pub struct Worker {
@@ -66,8 +40,7 @@ pub struct App {
     pub memory_usage: u64,
     pub total_memory: u64,
     // Evolution state
-    evolution_sender: Sender<ga::EvolutionUpdate>,
-    pub evolution_receiver: Receiver<ga::EvolutionUpdate>,
+    event_subscriber: broadcast::Receiver<Event>,
     pub evolution_log: Vec<String>,
     pub evolution_log_state: ListState,
     pub evolution_current_generation: u32,
@@ -76,12 +49,10 @@ pub struct App {
     pub active_matches: HashMap<usize, ActiveMatch>,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
-    log_receiver: Receiver<String>,
 }
 
 impl App {
-    pub fn new(_tablebase_path: Option<String>, _opening_book_path: Option<String>, log_receiver: Receiver<String>) -> Self {
-        let (evo_tx, evo_rx) = unbounded();
+    pub fn new() -> Self {
         let mut system = System::new_all();
         system.refresh_all();
 
@@ -94,8 +65,7 @@ impl App {
             memory_usage: 0,
             total_memory: 0,
             // Evolution state
-            evolution_sender: evo_tx,
-            evolution_receiver: evo_rx,
+            event_subscriber: EVENT_BROKER.subscribe(),
             evolution_log: Vec::new(),
             evolution_log_state: ListState::default(),
             evolution_current_generation: 0,
@@ -104,18 +74,15 @@ impl App {
             active_matches: HashMap::new(),
             evolution_thread_handle: None,
             evolution_workers: Arc::new(Mutex::new(Vec::new())),
-            log_receiver,
         }
     }
 
-    pub fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         self.start_evolution();
         while !self.should_quit {
             self.update_system_stats();
             terminal.draw(|f| ui::draw(f, self))?;
-            self.handle_events()?;
-            self.handle_evolution_updates();
-            self.handle_log_updates();
+            self.handle_events().await?;
 
             if let Some(handle) = &self.evolution_thread_handle {
                 if handle.is_finished() {
@@ -134,9 +101,10 @@ impl App {
         self.total_memory = self.system.total_memory();
     }
 
-    fn handle_events(&mut self) -> io::Result<()> {
+    async fn handle_events(&mut self) -> io::Result<()> {
+        // Handle keyboard events
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
+            if let crossterm::event::Event::Key(key) = event::read()? {
                 if key.kind == event::KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') => {
@@ -157,44 +125,27 @@ impl App {
                 }
             }
         }
-        Ok(())
-    }
 
-    fn start_evolution(&mut self) {
-        let evolution_manager = ga::EvolutionManager::new(self.evolution_sender.clone(), self.evolution_workers.clone());
-        let handle = thread::spawn(move || {
-            evolution_manager.run();
-        });
-        self.evolution_thread_handle = Some(handle);
-    }
-
-    fn handle_log_updates(&mut self) {
-        while let Ok(log_msg) = self.log_receiver.try_recv() {
-            self.evolution_log.push(log_msg.trim().to_string());
-            self.autoscroll_log();
-        }
-    }
-
-    fn handle_evolution_updates(&mut self) {
-        while let Ok(update) = self.evolution_receiver.try_recv() {
+        // Handle evolution events
+        while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
-                EvolutionUpdate::TournamentStart(total_matches, skipped_matches) => {
+                Event::TournamentStart(total_matches, skipped_matches) => {
                     self.evolution_total_matches = total_matches;
                     self.evolution_matches_completed = skipped_matches;
                 }
-                EvolutionUpdate::GenerationStarted(gen_index) => {
+                Event::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 0;
                     self.active_matches.clear();
                 }
-                EvolutionUpdate::MatchStarted(match_id, white_player, black_player) => {
+                Event::MatchStarted(match_id, white_player, black_player) => {
                     let mut match_state = ActiveMatch::default();
                     match_state.white_player = white_player;
                     match_state.black_player = black_player;
                     self.active_matches.insert(match_id, match_state);
                 }
-                EvolutionUpdate::MatchCompleted(match_id, game_match) => {
+                Event::MatchCompleted(match_id, game_match) => {
                     self.evolution_matches_completed += 1;
                     self.active_matches.remove(&match_id);
 
@@ -208,28 +159,37 @@ impl App {
                     self.evolution_log.push(log_message);
                     self.autoscroll_log();
                 }
-                EvolutionUpdate::ThinkingUpdate(match_id, _pv, eval) => {
+                Event::ThinkingUpdate(match_id, _pv, eval) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
                         match_state.eval = eval;
                     }
                 }
-                EvolutionUpdate::MovePlayed(match_id, san, material, board) => {
+                Event::MovePlayed(match_id, san, material, board) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
                         match_state.san.push_str(&format!("{san} "));
                         match_state.material = material;
                         match_state.board = Some(board);
                     }
                 }
-                EvolutionUpdate::StatusUpdate(message) => {
+                Event::StatusUpdate(message) => {
                     self.evolution_log.push(message);
                     self.autoscroll_log();
                 }
-                EvolutionUpdate::Panic(msg) => {
+                Event::Panic(msg) => {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
                     self.should_quit = true;
                 }
             }
         }
+        Ok(())
+    }
+
+    fn start_evolution(&mut self) {
+        let evolution_manager = ga::EvolutionManager::new(self.evolution_workers.clone());
+        let handle = thread::spawn(move || {
+            evolution_manager.run();
+        });
+        self.evolution_thread_handle = Some(handle);
     }
 
     fn autoscroll_log(&mut self) {
