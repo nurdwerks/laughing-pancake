@@ -1,6 +1,7 @@
 // src/server/mod.rs
 
 use actix::{Actor, AsyncContext, StreamHandler};
+use actix_files as fs;
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Error};
 use actix_web_actors::ws;
 use crate::event::{EVENT_BROKER};
@@ -11,8 +12,9 @@ pub async fn start_server() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .route("/ws", web::get().to(ws_index))
+            .service(fs::Files::new("/", "./static").index_file("index.html"))
     })
-    .bind("127.0.0.1:8080")?
+    .bind("0.0.0.0:3000")?
     .run()
     .await
 }
@@ -51,8 +53,11 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
-                if text == "quit" {
-                    EVENT_BROKER.publish(crate::event::Event::Quit);
+                let text = text.to_string();
+                if text == "request_quit" {
+                    EVENT_BROKER.publish(crate::event::Event::RequestQuit);
+                } else if text == "force_quit" {
+                    EVENT_BROKER.publish(crate::event::Event::ForceQuit);
                 }
             }
             Ok(ws::Message::Binary(_)) => (),

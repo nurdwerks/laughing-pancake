@@ -9,21 +9,36 @@
             height: 80vh;
             overflow-y: scroll;
             border: 1px solid black;
+            margin-bottom: 10px;
         }
     </style>
 </head>
 <body>
     <h1>Rust Chess TUI - Live Log</h1>
     <div id="log"></div>
+    <button id="request_quit">Request Quit</button>
+    <button id="force_quit">Force Quit</button>
     <script>
         const log = document.getElementById('log');
-        const ws = new WebSocket('ws://127.0.0.1:8080/ws');
+        const requestQuitButton = document.getElementById('request_quit');
+        const forceQuitButton = document.getElementById('force_quit');
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
 
         ws.onmessage = (event) => {
             const message = document.createElement('div');
             message.textContent = event.data;
             log.appendChild(message);
             log.scrollTop = log.scrollHeight;
+        };
+
+        requestQuitButton.onclick = () => {
+            ws.send('request_quit');
+        };
+
+        forceQuitButton.onclick = () => {
+            ws.send('force_quit');
         };
     </script>
 </body>

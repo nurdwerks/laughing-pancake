@@ -33,6 +33,7 @@ pub struct ActiveMatch {
 
 pub struct App {
     should_quit: bool,
+    graceful_quit: bool,
     pub error_message: Option<String>,
     // System info
     system: System,
@@ -58,6 +59,7 @@ impl App {
 
         Self {
             should_quit: false,
+            graceful_quit: false,
             error_message: None,
             // System info
             system,
@@ -84,10 +86,15 @@ impl App {
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_events().await?;
 
-            if let Some(handle) = &self.evolution_thread_handle {
-                if handle.is_finished() {
-                    self.should_quit = true;
+            if self.graceful_quit {
+                // Give the evolution thread time to finish gracefully
+                if let Some(handle) = &self.evolution_thread_handle {
+                    if handle.is_finished() {
+                        self.should_quit = true;
+                    }
                 }
+                // Add a small delay to prevent a busy-wait loop
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
         Ok(())
@@ -181,7 +188,11 @@ impl App {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
                     self.should_quit = true;
                 }
-                Event::Quit => {
+                Event::RequestQuit => {
+                    self.graceful_quit = true;
+                    EVENT_BROKER.publish(Event::StatusUpdate("Graceful shutdown initiated. Waiting for current matches to complete...".to_string()));
+                }
+                Event::ForceQuit => {
                     self.should_quit = true;
                 }
             }
