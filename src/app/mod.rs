@@ -54,6 +54,7 @@ pub struct App {
     pub evolution_log: Vec<String>,
     pub evolution_log_state: ListState,
     pub evolution_current_generation: u32,
+    pub evolution_current_round: usize,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatch>,
@@ -86,6 +87,7 @@ impl App {
             evolution_log: Vec::new(),
             evolution_log_state: ListState::default(),
             evolution_current_generation: 0,
+            evolution_current_round: 0,
             evolution_matches_completed: 0,
             evolution_total_matches: 0,
             active_matches: HashMap::new(),
@@ -149,6 +151,7 @@ impl App {
                 cpus: state_clone.cpus,
                 components: state_clone.components,
                 evolution_current_generation: state_clone.evolution_current_generation,
+                evolution_current_round: state_clone.evolution_current_round,
                 evolution_matches_completed: state_clone.evolution_matches_completed,
                 evolution_total_matches: state_clone.evolution_total_matches,
                 active_matches: active_matches
@@ -213,7 +216,8 @@ impl App {
         // Handle evolution events
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
-                Event::TournamentStart(total_matches, skipped_matches) => {
+                Event::TournamentStart(round, total_matches, skipped_matches) => {
+                    self.evolution_current_round = round;
                     self.evolution_total_matches = total_matches;
                     self.evolution_matches_completed = skipped_matches;
                 }
@@ -231,17 +235,24 @@ impl App {
                     };
                     self.active_matches.insert(match_id, match_state);
                 }
-                Event::MatchCompleted(match_id, game_match) => {
+                Event::MatchCompleted(match_id, result) => {
                     self.evolution_matches_completed += 1;
                     self.active_matches.remove(&match_id);
 
-                    let result_str = match game_match.result.as_str() {
-                        "1-0" => format!("White wins ({})", game_match.white_player_name.replace(".json", "")),
-                        "0-1" => format!("Black wins ({})", game_match.black_player_name.replace(".json", "")),
+                    let white_name = result.white_player_name.replace(".json", "");
+                    let black_name = result.black_player_name.replace(".json", "");
+
+                    let result_str = match result.result.as_str() {
+                        "1-0" => format!("White wins ({})", white_name),
+                        "0-1" => format!("Black wins ({})", black_name),
                         "1/2-1/2" => "Draw".to_string(),
                         _ => "Unknown result".to_string(),
                     };
-                    let log_message = format!("[Match {match_id}] Complete: {result_str}.");
+
+                    let log_message = format!(
+                        "[Match {match_id}] Complete: {result_str}. New ELOs: {} ({:.2}), {} ({:.2})",
+                        white_name, result.white_new_elo, black_name, result.black_new_elo
+                    );
                     self.log_message(log_message);
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
@@ -334,6 +345,7 @@ impl App {
                 })
                 .collect(),
             evolution_current_generation: self.evolution_current_generation,
+            evolution_current_round: self.evolution_current_round,
             evolution_matches_completed: self.evolution_matches_completed,
             evolution_total_matches: self.evolution_total_matches,
             active_matches: HashMap::new(), // This is cloned separately

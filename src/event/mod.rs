@@ -1,6 +1,5 @@
 // src/event/mod.rs
 
-use crate::ga::Match;
 use actix::Message;
 use once_cell::sync::Lazy;
 use serde::Serialize;
@@ -32,6 +31,7 @@ pub struct WebsocketState {
     pub components: Vec<ComponentState>,
     // Evolution state
     pub evolution_current_generation: u32,
+    pub evolution_current_round: usize,
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatchState>,
@@ -64,16 +64,25 @@ pub enum WsMessage {
     Log(String),
 }
 
+#[derive(Clone, Debug)]
+pub struct MatchResult {
+    pub white_player_name: String,
+    pub black_player_name: String,
+    pub white_new_elo: f64,
+    pub black_new_elo: f64,
+    pub result: String,
+}
+
 /// Defines all possible events that can occur in the application.
 #[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 pub enum Event {
     WebsocketStateUpdate(WebsocketState),
     // Events used by the TUI and backend logic
-    TournamentStart(usize, usize),
+    TournamentStart(usize, usize, usize),
     GenerationStarted(u32),
     MatchStarted(usize, String, String),
-    MatchCompleted(usize, Match),
+    MatchCompleted(usize, MatchResult),
     ThinkingUpdate(usize, String, i32),
     MovePlayed(usize, String, i32, Chess),
     StatusUpdate(String),

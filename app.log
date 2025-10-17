@@ -1,0 +1,8 @@
+   Compiling rust-chess-tui v0.1.0 (/app)
+warning: struct `Game` is never constructed
+   --> src/ga.rs:684:8
+    |
+684 | struct Game {
+    |        ^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default

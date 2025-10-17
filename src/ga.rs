@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
-use crate::event::{Event, EVENT_BROKER};
+use crate::event::{Event, MatchResult, EVENT_BROKER};
 
 const EVOLUTION_DIR: &str = "evolution";
 const POPULATION_SIZE: usize = 100;
@@ -355,7 +355,11 @@ fn play_round_matches(
     cache_manager: &CacheManager,
 ) -> Result<(), ()> {
     let total_matches = matches_to_play.len();
-    EVENT_BROKER.publish(Event::TournamentStart(total_matches, 0)); // No skipped matches in this model
+    EVENT_BROKER.publish(Event::TournamentStart(
+        generation.round as usize,
+        total_matches,
+        0,
+    )); // No skipped matches in this model
 
     let (results_tx, results_rx) = crossbeam_channel::unbounded();
     let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
@@ -447,7 +451,15 @@ fn play_round_matches(
 
         generation.matches.push(current_match.clone());
             save_generation(generation);
-            EVENT_BROKER.publish(Event::MatchCompleted(match_index, current_match));
+
+            let result_event = MatchResult {
+                white_player_name: current_match.white_player_name.clone(),
+                black_player_name: current_match.black_player_name.clone(),
+                white_new_elo: new_white_elo,
+                black_new_elo: new_black_elo,
+                result: current_match.result.clone(),
+            };
+            EVENT_BROKER.publish(Event::MatchCompleted(match_index, result_event));
         }
 
         // Wait for all worker threads to finish
