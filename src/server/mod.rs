@@ -69,6 +69,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                     EVENT_BROKER.publish(crate::event::Event::RequestQuit);
                 } else if text == "force_quit" {
                     EVENT_BROKER.publish(crate::event::Event::ForceQuit);
+                } else if text == "reset_simulation" {
+                    EVENT_BROKER.publish(crate::event::Event::ResetSimulation);
                 }
             }
             Ok(ws::Message::Binary(_)) => (),
