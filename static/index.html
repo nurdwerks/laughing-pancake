@@ -58,7 +58,6 @@
         }
         .board-container {
             flex-grow: 1;
-            padding: 0.5em;
             overflow: auto;
             display: flex;
             align-items: center;
@@ -278,7 +277,11 @@
 
                 const header = document.createElement('div');
                 header.className = 'match-header';
-                header.textContent = `Match ${id}: ${match.white_player.split('.')[0]} vs ${match.black_player.split('.')[0]}`;
+                const white_name = match.white_player.split('.')[0];
+                const black_name = match.black_player.split('.')[0];
+                const white_num = white_name.split('_').pop();
+                const black_num = black_name.split('_').pop();
+                header.textContent = `M${id}: ${white_num} v ${black_num}`;
 
                 const boardContainer = document.createElement('div');
                 boardContainer.className = 'board-container';
