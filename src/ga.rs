@@ -206,6 +206,8 @@ impl EvolutionManager {
             population: population.clone(),
             matches: Vec::new(),
             previous_matchups: HashSet::new(),
+            white_games_played: HashMap::new(),
+            black_games_played: HashMap::new(),
         })
     }
 
@@ -258,79 +260,105 @@ self.send_status("Top 5 Elites (by ELO):".to_string())?;
         Ok(())
     }
 
-/// Runs a 25-round tournament with ELO-based matchmaking.
-fn run_tournament(&self, generation: &mut Generation, cache_manager: &CacheManager) -> Result<(), ()> {
-        self.send_status(format!("Running tournament for generation {}", generation.generation_index))?;
+    /// Runs a 7-round Swiss tournament using the Dutch pairing system.
+    fn run_tournament(
+        &self,
+        generation: &mut Generation,
+        cache_manager: &CacheManager,
+    ) -> Result<(), ()> {
+        self.send_status(format!(
+            "Running tournament for generation {}",
+            generation.generation_index
+        ))?;
 
-    for round in generation.round..=NUM_ROUNDS {
-        if *self.should_quit.lock().unwrap() {
-            self.send_status("Shutdown signal received, stopping tournament.".to_string())?;
-            break;
-        }
-
-        generation.round = round;
-        self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
-
-        // 1. Generate Pairings for the current round using a Swiss-like system
-        let mut individuals_sorted = generation.population.individuals.clone();
-        individuals_sorted.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut round_matches = Vec::new();
-        let mut paired_ids = HashSet::new();
-
-        for i in 0..individuals_sorted.len() {
-            let p1_id = individuals_sorted[i].id;
-            if paired_ids.contains(&p1_id) {
-                continue;
+        for round in generation.round..=NUM_ROUNDS {
+            if *self.should_quit.lock().unwrap() {
+                self.send_status("Shutdown signal received, stopping tournament.".to_string())?;
+                break;
             }
 
-            let mut opponent_found = false;
-            for j in (i + 1)..individuals_sorted.len() {
-                let p2_id = individuals_sorted[j].id;
-                if paired_ids.contains(&p2_id) {
-                    continue;
-                }
+            generation.round = round;
+            self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
 
-                let matchup = (p1_id.min(p2_id), p1_id.max(p2_id));
-                if !generation.previous_matchups.contains(&matchup) {
-                    round_matches.push(Match {
-                        white_player_name: format!("individual_{}.json", p1_id),
-                        black_player_name: format!("individual_{}.json", p2_id),
-                        status: "pending".to_string(), result: "".to_string(), san: "".to_string(),
-                    });
-                    generation.previous_matchups.insert(matchup);
-                    paired_ids.insert(p1_id);
-                    paired_ids.insert(p2_id);
-                    opponent_found = true;
-                    break;
-                }
+            // 1. Generate Pairings using the Dutch system
+            let mut round_matches = Vec::new();
+            let mut paired_ids = HashSet::new();
+
+            // Group players by ELO score.
+            let mut score_groups: HashMap<i32, Vec<Individual>> = HashMap::new();
+            for individual in &generation.population.individuals {
+                // Use ELO rounded to nearest 100 for broader groups
+                let elo_group = (individual.elo / 100.0).round() as i32 * 100;
+                score_groups
+                    .entry(elo_group)
+                    .or_default()
+                    .push(individual.clone());
             }
 
-            // If no new opponent is found, find any available opponent for a rematch
-            if !opponent_found {
-                 for j in (i + 1)..individuals_sorted.len() {
-                    let p2_id = individuals_sorted[j].id;
-                    if !paired_ids.contains(&p2_id) {
-                         round_matches.push(Match {
-                            white_player_name: format!("individual_{}.json", p1_id),
-                            black_player_name: format!("individual_{}.json", p2_id),
-                            status: "pending".to_string(), result: "".to_string(), san: "".to_string(),
-                        });
-                        paired_ids.insert(p1_id);
-                        paired_ids.insert(p2_id);
-                        break;
+            // Sort score groups by ELO
+            let mut sorted_score_groups = score_groups.into_iter().collect::<Vec<_>>();
+            sorted_score_groups.sort_by_key(|(elo, _)| -*elo);
+
+            let mut unpaired_players = Vec::new();
+
+            for (_, mut group) in sorted_score_groups {
+                group.sort_by(|a, b| {
+                    b.elo
+                        .partial_cmp(&a.elo)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+                group.extend(unpaired_players.drain(..)); // Add players from previous smaller groups
+
+                while group.len() >= 2 {
+                    let p1 = group.remove(0);
+                    let mut opponent_found = false;
+
+                    for i in 0..group.len() {
+                        let p2 = &group[i];
+                        let matchup = (p1.id.min(p2.id), p1.id.max(p2.id));
+
+                        if !generation.previous_matchups.contains(&matchup) {
+                            let p2 = group.remove(i);
+                            let (white, black) = self.assign_colors(
+                                &p1,
+                                &p2,
+                                &generation.white_games_played,
+                                &generation.black_games_played,
+                            );
+
+                            round_matches.push(Match {
+                                white_player_name: format!("individual_{}.json", white.id),
+                                black_player_name: format!("individual_{}.json", black.id),
+                                status: "pending".to_string(),
+                                result: "".to_string(),
+                                san: "".to_string(),
+                            });
+
+                            generation.previous_matchups.insert(matchup);
+                            paired_ids.insert(p1.id);
+                            paired_ids.insert(p2.id);
+                            *generation.white_games_played.entry(white.id).or_insert(0) += 1;
+                            *generation.black_games_played.entry(black.id).or_insert(0) += 1;
+
+                            opponent_found = true;
+                            break;
+                        }
+                    }
+
+                    if !opponent_found {
+                        unpaired_players.push(p1);
                     }
                 }
+                unpaired_players.extend(group); // Add remaining players
             }
+
+            // 2. Play the matches for the current round
+            self.play_round_matches(&round_matches, generation, cache_manager)?;
+
+            // 3. Save state after each round
+            save_generation(generation);
+            self.send_status(format!("Round {round} complete. Saved progress."))?;
         }
-
-        // 2. Play the matches for the current round
-        self.play_round_matches(&round_matches, generation, cache_manager)?;
-
-        // 3. Save state after each round
-        save_generation(generation);
-        self.send_status(format!("Round {round} complete. Saved progress."))?;
-    }
 
     // At the end of the tournament, print final ELOs.
     generation.population.individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
@@ -566,6 +594,42 @@ fn play_round_matches(
 
         Ok((result, pgn))
     }
+
+    fn assign_colors<'a>(
+        &self,
+        p1: &'a Individual,
+        p2: &'a Individual,
+        white_games_played: &HashMap<usize, u32>,
+        black_games_played: &HashMap<usize, u32>,
+    ) -> (&'a Individual, &'a Individual) {
+        let p1_white_games = white_games_played.get(&p1.id).cloned().unwrap_or(0);
+        let p1_black_games = black_games_played.get(&p1.id).cloned().unwrap_or(0);
+        let p2_white_games = white_games_played.get(&p2.id).cloned().unwrap_or(0);
+        let p2_black_games = black_games_played.get(&p2.id).cloned().unwrap_or(0);
+
+        // Player with fewer white games plays white
+        if p1_white_games < p2_white_games {
+            return (p1, p2);
+        }
+        if p2_white_games < p1_white_games {
+            return (p2, p1);
+        }
+
+        // Player with more black games plays white
+        if p1_black_games > p2_black_games {
+            return (p1, p2);
+        }
+        if p2_black_games > p1_black_games {
+            return (p2, p1);
+        }
+
+        // Higher ELO plays white as a tie-breaker
+        if p1.elo >= p2.elo {
+            (p1, p2)
+        } else {
+            (p2, p1)
+        }
+    }
 }
 
 fn calculate_material_difference(pos: &Chess) -> i32 {
@@ -644,6 +708,10 @@ pub struct Generation {
     pub matches: Vec<Match>,
     #[serde(with = "serde_helpers::hash_set_tuple_vec")]
     pub previous_matchups: HashSet<(usize, usize)>,
+    #[serde(default)]
+    pub white_games_played: HashMap<usize, u32>,
+    #[serde(default)]
+    pub black_games_played: HashMap<usize, u32>,
 }
 
 // Helper for serializing HashSet<(A, B)>

@@ -1,1 +1,1 @@
-pub const NUM_ROUNDS: u32 = 25;
+pub const NUM_ROUNDS: u32 = 7;
