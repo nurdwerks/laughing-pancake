@@ -115,14 +115,16 @@
             height: 100%;
             /* Use vmin to make font size scale with the smallest screen dimension */
             font-size: 4vmin;
+            padding: 0;
+            margin: 0;
         }
         .light { background-color: #f0d9b5; }
         .dark { background-color: #b58863; }
         .piece {
             text-shadow: 0 0 2px #000; /* Outline for better visibility */
         }
-        .white-piece { color: #f8f8f2; }
-        .black-piece { color: #50fa7b; }
+        .white-piece { color: white; }
+        .black-piece { color: black; }
         #buttons {
             margin-top: 1em;
             flex-shrink: 0;
@@ -177,7 +179,7 @@
 
     <script>
         const PIECE_SYMBOLS = {
-            'p': '♟', 'r': '♜', 'n': '♞', 'b': '♝', 'q': '♛', 'k': '♚',
+            'p': '♙', 'r': '♖', 'n': '♘', 'b': '♗', 'q': '♕', 'k': '♔',
             'P': '♙', 'R': '♖', 'N': '♘', 'B': '♗', 'Q': '♕', 'K': '♔'
         };
 
