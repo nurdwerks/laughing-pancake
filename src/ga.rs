@@ -208,6 +208,7 @@ impl EvolutionManager {
             previous_matchups: HashSet::new(),
             white_games_played: HashMap::new(),
             black_games_played: HashMap::new(),
+            round_pairings: Vec::new(),
         })
     }
 
@@ -280,80 +281,19 @@ self.send_status("Top 5 Elites (by ELO):".to_string())?;
             generation.round = round;
             self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
 
-            // 1. Generate Pairings using the Dutch system
-            let mut round_matches = Vec::new();
-            let mut paired_ids = HashSet::new();
-
-            // Group players by ELO score.
-            let mut score_groups: HashMap<i32, Vec<Individual>> = HashMap::new();
-            for individual in &generation.population.individuals {
-                // Use ELO rounded to nearest 100 for broader groups
-                let elo_group = (individual.elo / 100.0).round() as i32 * 100;
-                score_groups
-                    .entry(elo_group)
-                    .or_default()
-                    .push(individual.clone());
-            }
-
-            // Sort score groups by ELO
-            let mut sorted_score_groups = score_groups.into_iter().collect::<Vec<_>>();
-            sorted_score_groups.sort_by_key(|(elo, _)| -*elo);
-
-            let mut unpaired_players = Vec::new();
-
-            for (_, mut group) in sorted_score_groups {
-                group.sort_by(|a, b| {
-                    b.elo
-                        .partial_cmp(&a.elo)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                });
-                group.extend(unpaired_players.drain(..)); // Add players from previous smaller groups
-
-                while group.len() >= 2 {
-                    let p1 = group.remove(0);
-                    let mut opponent_found = false;
-
-                    for i in 0..group.len() {
-                        let p2 = &group[i];
-                        let matchup = (p1.id.min(p2.id), p1.id.max(p2.id));
-
-                        if !generation.previous_matchups.contains(&matchup) {
-                            let p2 = group.remove(i);
-                            let (white, black) = self.assign_colors(
-                                &p1,
-                                &p2,
-                                &generation.white_games_played,
-                                &generation.black_games_played,
-                            );
-
-                            round_matches.push(Match {
-                                white_player_name: format!("individual_{}.json", white.id),
-                                black_player_name: format!("individual_{}.json", black.id),
-                                status: "pending".to_string(),
-                                result: "".to_string(),
-                                san: "".to_string(),
-                            });
-
-                            generation.previous_matchups.insert(matchup);
-                            paired_ids.insert(p1.id);
-                            paired_ids.insert(p2.id);
-                            *generation.white_games_played.entry(white.id).or_insert(0) += 1;
-                            *generation.black_games_played.entry(black.id).or_insert(0) += 1;
-
-                            opponent_found = true;
-                            break;
-                        }
-                    }
-
-                    if !opponent_found {
-                        unpaired_players.push(p1);
-                    }
-                }
-                unpaired_players.extend(group); // Add remaining players
+            if generation.round_pairings.is_empty() {
+                self.send_status("Generating pairings for the round.".to_string())?;
+                generation.round_pairings =
+                    self.generate_pairings(generation, round);
+                save_generation(generation);
+            } else {
+                self.send_status("Using existing pairings for the round.".to_string())?;
             }
 
             // 2. Play the matches for the current round
+            let round_matches = generation.round_pairings.clone();
             self.play_round_matches(&round_matches, generation, cache_manager)?;
+            generation.round_pairings.clear();
 
             // 3. Save state after each round
             save_generation(generation);
@@ -372,6 +312,93 @@ self.send_status("Top 5 Elites (by ELO):".to_string())?;
         ))?;
     }
     Ok(())
+}
+
+fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Match> {
+    let mut round_matches = Vec::new();
+    let mut paired_ids = HashSet::new();
+
+    // Group players by ELO score.
+    let mut score_groups: HashMap<i32, Vec<Individual>> = HashMap::new();
+    for individual in &generation.population.individuals {
+        // Use ELO rounded to nearest 100 for broader groups
+        let elo_group = (individual.elo / 100.0).round() as i32 * 100;
+        score_groups
+            .entry(elo_group)
+            .or_default()
+            .push(individual.clone());
+    }
+
+    // Sort score groups by ELO
+    let mut sorted_score_groups = score_groups.into_iter().collect::<Vec<_>>();
+    sorted_score_groups.sort_by_key(|(elo, _)| -*elo);
+
+    let mut unpaired_players = Vec::new();
+
+    for (_, mut group) in sorted_score_groups {
+        group.sort_by(|a, b| {
+            b.elo
+                .partial_cmp(&a.elo)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        group.extend(unpaired_players.drain(..)); // Add players from previous smaller groups
+
+        while group.len() >= 2 {
+            let p1 = group.remove(0);
+            let mut opponent_found = false;
+
+            for i in 0..group.len() {
+                let p2 = &group[i];
+                let matchup = (p1.id.min(p2.id), p1.id.max(p2.id));
+
+                if !generation.previous_matchups.contains(&matchup) {
+                    let p2 = group.remove(i);
+                    let (white, black) = self.assign_colors(
+                        &p1,
+                        &p2,
+                        &generation.white_games_played,
+                        &generation.black_games_played,
+                    );
+
+                    let white_player_name = format!("individual_{}.json", white.id);
+                    let black_player_name = format!("individual_{}.json", black.id);
+
+                    // Check if this match has already been played in this round
+                    let match_played = generation.matches.iter().any(|m| {
+                        m.round == round
+                            && m.white_player_name == white_player_name
+                            && m.black_player_name == black_player_name
+                    });
+
+                    if !match_played {
+                        round_matches.push(Match {
+                            round,
+                            white_player_name,
+                            black_player_name,
+                            status: "pending".to_string(),
+                            result: "".to_string(),
+                            san: "".to_string(),
+                        });
+                    }
+
+                    generation.previous_matchups.insert(matchup);
+                    paired_ids.insert(p1.id);
+                    paired_ids.insert(p2.id);
+                    *generation.white_games_played.entry(white.id).or_insert(0) += 1;
+                    *generation.black_games_played.entry(black.id).or_insert(0) += 1;
+
+                    opponent_found = true;
+                    break;
+                }
+            }
+
+            if !opponent_found {
+                unpaired_players.push(p1);
+            }
+        }
+        unpaired_players.extend(group); // Add remaining players
+    }
+    round_matches
 }
 
 
@@ -693,6 +720,7 @@ impl Population {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Match {
+    pub round: u32,
     pub white_player_name: String,
     pub black_player_name: String,
     pub status: String, // "pending", "completed"
@@ -712,6 +740,8 @@ pub struct Generation {
     pub white_games_played: HashMap<usize, u32>,
     #[serde(default)]
     pub black_games_played: HashMap<usize, u32>,
+    #[serde(default)]
+    pub round_pairings: Vec<Match>,
 }
 
 // Helper for serializing HashSet<(A, B)>
