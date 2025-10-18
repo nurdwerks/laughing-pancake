@@ -91,6 +91,7 @@ pub enum Event {
     Panic(String),
     RequestQuit,
     ForceQuit,
+    ResetSimulation,
 }
 
 impl From<&Chess> for ActiveMatchState {

@@ -194,8 +194,8 @@ impl App {
                     self.evolution_matches_completed += 1;
                     self.active_matches.remove(&match_id);
 
-                    let white_name = result.white_player_name.replace(".json", "");
-                    let black_name = result.black_player_name.replace(".json", "");
+                    let _white_name = result.white_player_name.replace(".json", "");
+                    let _black_name = result.black_player_name.replace(".json", "");
 
                     let result_char = match result.result.as_str() {
                         "1-0" => "W",
@@ -236,6 +236,16 @@ impl App {
                 }
                 Event::ForceQuit => {
                     *self.evolution_should_quit.lock().unwrap() = true;
+                    self.should_quit = true;
+                }
+                Event::ResetSimulation => {
+                    *self.evolution_should_quit.lock().unwrap() = true;
+                    if let Some(handle) = self.evolution_thread_handle.take() {
+                        handle.join().unwrap();
+                    }
+                    if let Err(e) = std::fs::remove_dir_all("evolution") {
+                        self.error_message = Some(format!("Failed to delete evolution directory: {}", e));
+                    }
                     self.should_quit = true;
                 }
                 Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) => {
