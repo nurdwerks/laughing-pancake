@@ -1,9 +1,7 @@
 //! Evaluation of space control.
 
 use shakmaty::{Board, Color, Piece, Role, Bitboard, Square, Rank, File};
-
-const SPACE_PER_SQUARE_BONUS: i32 = 2;
-const CENTER_CONTROL_BONUS: i32 = 5;
+use crate::constants::{SPACE_PER_SQUARE_BONUS, CENTER_CONTROL_BONUS};
 
 /// Evaluates the space controlled by a player.
 pub fn evaluate(board: &Board, color: Color) -> i32 {

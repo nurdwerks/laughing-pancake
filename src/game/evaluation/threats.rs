@@ -1,10 +1,8 @@
 // src/game/evaluation/threats.rs
 
 use shakmaty::{Board, Color, Piece, Role, Square};
+use crate::constants::{UNDEFENDED_PIECE_BONUS_FACTOR, GOOD_TRADE_BONUS_FACTOR};
 use super::get_piece_value;
-
-const UNDEFENDED_PIECE_BONUS_FACTOR: i32 = 10; // 10% of piece value
-const GOOD_TRADE_BONUS_FACTOR: i32 = 5;      // 5% of piece value
 
 pub fn evaluate(board: &Board, color: Color) -> i32 {
     let mut score = 0;

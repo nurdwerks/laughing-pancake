@@ -1,9 +1,7 @@
 //! Evaluation of initiative and threats.
 
 use shakmaty::{Board, Color, Piece, Role, Bitboard};
-
-const THREAT_ON_MINOR_PIECE_BONUS: i32 = 10;
-const THREAT_ON_MAJOR_PIECE_BONUS: i32 = 25;
+use crate::constants::{THREAT_ON_MINOR_PIECE_BONUS, THREAT_ON_MAJOR_PIECE_BONUS};
 
 /// Evaluates the initiative for a player.
 ///

@@ -11,8 +11,7 @@ use crossbeam_utils::thread;
 use num_cpus;
 use evaluation_cache::EvaluationCache;
 pub use mcts_cache::{MctsCache, MctsNodeData};
-
-const MATE_SCORE: i32 = 1_000_000;
+use crate::constants::MATE_SCORE;
 
 use serde::{Deserialize, Serialize};
 
@@ -221,7 +220,7 @@ impl PvsSearcher {
                         .join(", ");
 
                     let worker_display_name = if let Some(id) = match_id {
-                        format!("M {} {}", id, worker_name)
+                        format!("M {id} {worker_name}")
                     } else {
                         worker_name.to_string()
                     };

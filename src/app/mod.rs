@@ -244,7 +244,7 @@ impl App {
                         handle.join().unwrap();
                     }
                     if let Err(e) = std::fs::remove_dir_all("evolution") {
-                        self.error_message = Some(format!("Failed to delete evolution directory: {}", e));
+                        self.error_message = Some(format!("Failed to delete evolution directory: {e}"));
                     }
                     self.should_quit = true;
                 }

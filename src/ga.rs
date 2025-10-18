@@ -9,13 +9,11 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
-use crate::constants::{NUM_ROUNDS, STARTING_ELO};
+use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE};
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 
 const EVOLUTION_DIR: &str = "evolution";
-const POPULATION_SIZE: usize = 100;
-const MUTATION_CHANCE: f64 = 0.05; // 5% chance for each parameter to mutate
 
 /// Manages evaluation caches for all players in the tournament.
 /// Caches are created on-demand and automatically destroyed when no longer in use.
@@ -252,8 +250,7 @@ impl EvolutionManager {
         // Elitism: Copy the top individuals to the next generation.
         // The number of elites is the smaller of 5 or the number of available parents.
         let num_elites = parents.len().min(5);
-        for i in 0..num_elites {
-            let elite = parents[i];
+        for (i, elite) in parents.iter().enumerate().take(num_elites) {
             let elite_config_path = next_generation_dir.join(format!("individual_{i}.json"));
             let json = serde_json::to_string_pretty(&elite.config).expect("Failed to serialize elite config");
             fs::write(elite_config_path, json).expect("Failed to write elite config file");
@@ -359,7 +356,7 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
                 .partial_cmp(&a.elo)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        group.extend(unpaired_players.drain(..)); // Add players from previous smaller groups
+        group.append(&mut unpaired_players); // Add players from previous smaller groups
 
         while group.len() >= 2 {
             let p1 = group.remove(0);
@@ -487,9 +484,7 @@ fn play_round_matches(
 
                     EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
                     if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
-                        results_tx_clone.send((match_index, game_match, result, san)).unwrap_or_else(|_| {
-                            // Log or handle error if receiver is dropped
-                        });
+                        results_tx_clone.send((match_index, game_match, result, san)).unwrap_or(());
                     }
                 }
             });
@@ -823,13 +818,6 @@ pub fn save_generation(generation: &Generation) {
         .join(format!("generation_{}.json", generation.generation_index));
     let json = serde_json::to_string_pretty(generation).expect("Failed to serialize generation state");
     fs::write(file_path, json).expect("Failed to write generation state file");
-}
-
-/// The main entry point for the evolutionary algorithm.
-/// Represents a single game to be played between two individuals.
-struct Game {
-    white_player_id: usize,
-    black_player_id: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
