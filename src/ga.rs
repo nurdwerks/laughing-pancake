@@ -9,7 +9,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
-use crate::constants::NUM_ROUNDS;
+use crate::constants::{NUM_ROUNDS, STARTING_ELO};
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 
@@ -216,36 +216,54 @@ impl EvolutionManager {
     fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
         self.send_status("\nEvolving to the next generation...".to_string())?;
 
-        // 1. Selection: Find the top 5 individuals
-        let mut sorted_individuals = population.individuals.iter().collect::<Vec<_>>();
-// Sort by ELO in descending order
-sorted_individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
-        let elites = &sorted_individuals[0..5];
+        // Survivor selection is already implicitly handled by the parent selection criteria.
+        // Parent selection: only use individuals with a higher Elo than the starting value.
+        let mut parents: Vec<&Individual> = population
+            .individuals
+            .iter()
+            .filter(|i| i.elo > STARTING_ELO)
+            .collect();
 
-self.send_status("Top 5 Elites (by ELO):".to_string())?;
-        for (i, elite) in elites.iter().enumerate() {
+        // Sort parents by ELO in descending order
+        parents.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+
+        if parents.is_empty() {
+            self.send_status(
+                "No individuals performed better than the starting ELO. Generating a new random population."
+                    .to_string(),
+            )?;
+            generate_initial_population(next_generation_dir);
+            return Ok(());
+        }
+
+        self.send_status(format!("Selected {} parents for the next generation:", parents.len()))?;
+        for (i, parent) in parents.iter().enumerate() {
+            if i >= 5 { break; } // Only show top 5
             self.send_status(format!(
-        "{}. Individual {} (ELO: {:.2})",
+                "{}. Individual {} (ELO: {:.2})",
                 i + 1,
-                elite.id,
-        elite.elo
+                parent.id,
+                parent.elo
             ))?;
         }
 
         let mut rng = rand::thread_rng();
 
-        // 2. Elitism: Copy the top 5 to the next generation
-        for (i, elite) in elites.iter().enumerate().take(5) {
+        // Elitism: Copy the top individuals to the next generation.
+        // The number of elites is the smaller of 5 or the number of available parents.
+        let num_elites = parents.len().min(5);
+        for i in 0..num_elites {
+            let elite = parents[i];
             let elite_config_path = next_generation_dir.join(format!("individual_{i}.json"));
             let json = serde_json::to_string_pretty(&elite.config).expect("Failed to serialize elite config");
             fs::write(elite_config_path, json).expect("Failed to write elite config file");
         }
 
-        // 3. Breeding & 4. Mutation: Create the remaining 95 individuals
-        for i in 5..POPULATION_SIZE {
-            // Select two random parents from the elite pool
-            let parent1 = elites[rng.gen_range(0..elites.len())];
-            let parent2 = elites[rng.gen_range(0..elites.len())];
+        // Breeding & Mutation: Create the remaining individuals.
+        for i in num_elites..POPULATION_SIZE {
+            // Select two random parents from the parent pool
+            let parent1 = parents[rng.gen_range(0..parents.len())];
+            let parent2 = parents[rng.gen_range(0..parents.len())];
 
             // Create the child by crossing over parameters
             let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
@@ -735,7 +753,7 @@ impl Population {
             individuals.push(Individual {
                 id: i,
                 config,
-                elo: 1200.0, // Starting ELO
+                elo: STARTING_ELO, // Starting ELO
             });
         }
         Self { individuals }
