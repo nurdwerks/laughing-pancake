@@ -1,11 +1,9 @@
 // src/game/evaluation/mobility.rs
 
 use shakmaty::{Board, Color, Piece, Role};
-
-const KNIGHT_MOBILITY_BONUS: i32 = 4;
-const BISHOP_MOBILITY_BONUS: i32 = 5;
-const ROOK_MOBILITY_BONUS: i32 = 2;
-const QUEEN_MOBILITY_BONUS: i32 = 1;
+use crate::constants::{
+    KNIGHT_MOBILITY_BONUS, BISHOP_MOBILITY_BONUS, ROOK_MOBILITY_BONUS, QUEEN_MOBILITY_BONUS
+};
 
 pub fn evaluate(board: &Board, color: Color) -> i32 {
     let mut mobility_score = 0;

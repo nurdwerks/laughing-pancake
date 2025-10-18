@@ -1,9 +1,7 @@
 //! Evaluation terms for knights.
 
 use shakmaty::{Board, Color, File, Piece, Role, Square, Bitboard, Rank};
-
-const OUTPOST_BONUS: i32 = 30;
-const CENTRALIZATION_BONUS: i32 = 10;
+use crate::constants::{OUTPOST_BONUS, CENTRALIZATION_BONUS};
 
 /// Evaluates the placement of knights.
 pub fn evaluate(board: &Board, color: Color) -> i32 {

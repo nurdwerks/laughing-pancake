@@ -2,8 +2,7 @@
 
 use shakmaty::{Board, Color, Piece, Role, Square, Bitboard};
 use crate::game::search::SearchConfig;
-
-const BAD_BISHOP_PENALTY: i32 = -10;
+use crate::constants::BAD_BISHOP_PENALTY;
 
 /// Evaluates the placement of bishops.
 pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {

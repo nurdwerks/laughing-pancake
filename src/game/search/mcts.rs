@@ -42,7 +42,7 @@ impl Searcher for MctsSearcher {
             let mut worker_list = workers.lock().unwrap();
             worker_list.push(Worker {
                 id: worker_id,
-                name: format!("[Match {}] MCTS", match_id),
+                name: format!("[Match {match_id}] MCTS"),
                 start_time: std::time::Instant::now(),
             });
         }

@@ -211,8 +211,10 @@ fn test_threat_analysis_good_trade() {
 #[test]
 fn test_tempo_bonus() {
     let pos = Chess::default(); // White to move
-    let mut config = SearchConfig::default();
-    config.tempo_bonus_weight = 15;
+    let config = SearchConfig {
+        tempo_bonus_weight: 15,
+        ..Default::default()
+    };
 
     // To isolate the tempo bonus, we can't easily set all other weights to 0
     // without a major refactor. Instead, we'll get the base evaluation
