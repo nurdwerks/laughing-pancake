@@ -409,12 +409,36 @@ fn play_round_matches(
     generation: &mut Generation,
     cache_manager: &CacheManager,
 ) -> Result<(), ()> {
+    // Identify completed matches for the current round to avoid re-playing them.
+    let completed_match_keys: HashSet<(String, String)> = generation
+        .matches
+        .iter()
+        .filter(|m| m.round == generation.round)
+        .map(|m| (m.white_player_name.clone(), m.black_player_name.clone()))
+        .collect();
+
+    let pending_matches: Vec<Match> = matches_to_play
+        .iter()
+        .filter(|m| {
+            !completed_match_keys.contains(&(m.white_player_name.clone(), m.black_player_name.clone()))
+        })
+        .cloned()
+        .collect();
+
+    let skipped_matches = matches_to_play.len() - pending_matches.len();
+    if skipped_matches > 0 {
+        self.send_status(format!(
+            "Skipping {} completed matches for round {}.",
+            skipped_matches, generation.round
+        ))?;
+    }
+
     let total_matches = matches_to_play.len();
     EVENT_BROKER.publish(Event::TournamentStart(
         generation.round as usize,
         total_matches,
-        0,
-    )); // No skipped matches in this model
+        skipped_matches,
+    ));
 
     let (results_tx, results_rx) = crossbeam_channel::unbounded();
     let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
@@ -455,7 +479,7 @@ fn play_round_matches(
         }
 
         // Send all jobs to the workers
-    for game_match in matches_to_play.iter().cloned() {
+    for game_match in pending_matches.iter().cloned() {
             if *self.should_quit.lock().unwrap() {
                 break;
             }
