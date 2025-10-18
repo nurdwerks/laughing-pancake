@@ -221,7 +221,7 @@ impl PvsSearcher {
                         .join(", ");
 
                     let worker_display_name = if let Some(id) = match_id {
-                        format!("[Match {}] {}", id, worker_name)
+                        format!("M {} {}", id, worker_name)
                     } else {
                         worker_name.to_string()
                     };

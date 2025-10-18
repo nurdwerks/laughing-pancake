@@ -197,16 +197,16 @@ impl App {
                     let white_name = result.white_player_name.replace(".json", "");
                     let black_name = result.black_player_name.replace(".json", "");
 
-                    let result_str = match result.result.as_str() {
-                        "1-0" => format!("White wins ({})", white_name),
-                        "0-1" => format!("Black wins ({})", black_name),
-                        "1/2-1/2" => "Draw".to_string(),
-                        _ => "Unknown result".to_string(),
+                    let result_char = match result.result.as_str() {
+                        "1-0" => "W",
+                        "0-1" => "B",
+                        "1/2-1/2" => "D",
+                        _ => "?",
                     };
 
                     let log_message = format!(
-                        "[Match {match_id}] Complete: {result_str}. New ELOs: {} ({:.2}), {} ({:.2})",
-                        white_name, result.white_new_elo, black_name, result.black_new_elo
+                        "M {} ({}) {:.2} {:.2}",
+                        match_id, result_char, result.white_new_elo, result.black_new_elo
                     );
                     self.log_message(log_message);
                 }

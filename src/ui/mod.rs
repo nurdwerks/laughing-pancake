@@ -47,7 +47,7 @@ fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_match_pane(frame: &mut Frame, area: Rect, match_id: &usize, match_state: &crate::app::ActiveMatch) {
     let match_pane = Block::default().borders(Borders::ALL).title(format!(
-        "Match {}: {} vs {}",
+        "M {}: {} vs {}",
         match_id,
         match_state.white_player.split('.').next().unwrap_or(""),
         match_state.black_player.split('.').next().unwrap_or("")
