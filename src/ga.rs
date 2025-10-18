@@ -574,8 +574,8 @@ fn play_round_matches(
         let mut position_counts: HashMap<u64, u32> = HashMap::new();
         let mut game_result_override = None;
         while !pos.is_game_over() {
-            // End the game in a draw after 60 moves (120 half-moves/plies).
-            if sans.len() >= 120 {
+            // End the game in a draw after 100 moves (200 half-moves/plies).
+            if sans.len() >= 200 {
                 game_result_override = Some(GameResult::Draw);
                 break;
             }
