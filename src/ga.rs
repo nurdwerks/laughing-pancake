@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Distribution;
+use rand::seq::SliceRandom;
 use shakmaty::{Chess, Position, zobrist::{Zobrist64, ZobristHash}, EnPassantMode};
 use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
@@ -198,10 +199,16 @@ impl EvolutionManager {
         }
 
         self.send_status(format!("No existing match data found for generation {generation_index}. Creating new tournament."))?;
+
+        let mut shuffled_population = population.clone();
+        shuffled_population
+            .individuals
+            .shuffle(&mut rand::thread_rng());
+
         Ok(Generation {
             generation_index,
             round: 1,
-            population: population.clone(),
+            population: shuffled_population,
             matches: Vec::new(),
             previous_matchups: HashSet::new(),
             white_games_played: HashMap::new(),
