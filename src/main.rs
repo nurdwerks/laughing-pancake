@@ -1,3 +1,14 @@
+use std::error::Error;
+use std::process;
+use std::thread;
+use std::panic;
+use ratatui::Terminal;
+use ratatui::prelude::CrosstermBackend;
+use crate::app::App;
+use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
+use crossterm::event::DisableMouseCapture;
+use crossterm::execute;
+
 mod app;
 mod ui;
 mod game;
@@ -6,15 +17,7 @@ mod event;
 mod server;
 mod constants;
 
-use crate::app::App;
 use clap::Parser;
-use crossterm::{
-    event::DisableMouseCapture,
-    execute,
-    terminal::{disable_raw_mode, LeaveAlternateScreen},
-};
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::{error::Error, panic, process, thread};
 
 
 #[derive(Parser, Debug)]
@@ -59,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
     // setup terminal
-    let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(std::io.stdout()))?;
 
     // create app and run it
     let mut app = App::new(git_hash);

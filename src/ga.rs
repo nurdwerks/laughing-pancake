@@ -220,66 +220,102 @@ impl EvolutionManager {
     /// Takes a completed tournament population and evolves it to create the next generation.
     fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
         self.send_status("\nEvolving to the next generation...".to_string())?;
+        let mut rng = rand::thread_rng();
 
-        // Survivor selection is already implicitly handled by the parent selection criteria.
-        // Parent selection: only use individuals with a higher Elo than the starting value.
-        let mut parents: Vec<&Individual> = population
+        // Partition the population based on ELO.
+        let parents: Vec<Individual> = population
             .individuals
             .iter()
             .filter(|i| i.elo > STARTING_ELO)
+            .cloned()
             .collect();
 
-        // Sort parents by ELO in descending order
-        parents.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+        let advancers: Vec<Individual> = population
+            .individuals
+            .iter()
+            .filter(|i| i.elo == STARTING_ELO)
+            .cloned()
+            .collect();
 
-        if parents.is_empty() {
-            self.send_status(
-                "No individuals performed better than the starting ELO. Generating a new random population."
-                    .to_string(),
-            )?;
-            generate_initial_population(next_generation_dir);
-            return Ok(());
+        let mut next_generation_configs: Vec<SearchConfig> = Vec::with_capacity(POPULATION_SIZE);
+
+        // Add all parents and advancers to the next generation (elitism).
+        next_generation_configs.extend(parents.iter().map(|p| p.config.clone()));
+        next_generation_configs.extend(advancers.iter().map(|a| a.config.clone()));
+
+        self.send_status(format!(
+            "{} individuals with ELO > {} are promoted as parents.",
+            parents.len(),
+            STARTING_ELO
+        ))?;
+        self.send_status(format!(
+            "{} individuals with ELO = {} are advanced to the next generation.",
+            advancers.len(),
+            STARTING_ELO
+        ))?;
+
+
+        let num_remaining = POPULATION_SIZE - next_generation_configs.len();
+
+        match parents.len() {
+            0 => {
+                self.send_status(
+                    "No parents for breeding. Filling empty slots with new random individuals."
+                        .to_string(),
+                )?;
+                for _ in 0..num_remaining {
+                    next_generation_configs.push(SearchConfig::default_with_randomization(&mut rng));
+                }
+
+                if advancers.len() == POPULATION_SIZE {
+                    self.send_status(
+                        "Population has stagnated. Mutating 10% of the population.".to_string(),
+                    )?;
+                    let num_to_mutate = (POPULATION_SIZE as f32 * 0.1).round() as usize;
+                    let indices_to_mutate = (0..POPULATION_SIZE).collect::<Vec<usize>>();
+                    let chosen_indices = indices_to_mutate.choose_multiple(&mut rng, num_to_mutate);
+
+                    for &index in chosen_indices {
+                        mutate(&mut next_generation_configs[index], &mut rng);
+                    }
+                }
+            }
+            1 => {
+                self.send_status(
+                    "Only one parent available. Filling empty slots with mutated clones.".to_string(),
+                )?;
+                let parent_config = &parents[0].config;
+                for _ in 0..num_remaining {
+                    let mut child_config = parent_config.clone();
+                    mutate(&mut child_config, &mut rng);
+                    next_generation_configs.push(child_config);
+                }
+            }
+            _ => {
+                // More than one parent, use crossover.
+                self.send_status(format!(
+                    "Selected {} parents. Breeding {} new individuals...",
+                    parents.len(),
+                    num_remaining
+                ))?;
+                for _ in 0..num_remaining {
+                    let parent1 = &parents[rng.gen_range(0..parents.len())];
+                    let parent2 = &parents[rng.gen_range(0..parents.len())];
+                    let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
+                    mutate(&mut child_config, &mut rng);
+                    next_generation_configs.push(child_config);
+                }
+            }
         }
 
-        self.send_status(format!("Selected {} parents for the next generation:", parents.len()))?;
-        for (i, parent) in parents.iter().enumerate() {
-            if i >= 5 { break; } // Only show top 5
-            self.send_status(format!(
-                "{}. Individual {} (ELO: {:.2})",
-                i + 1,
-                parent.id,
-                parent.elo
-            ))?;
+        // Save the new generation to files.
+        for (i, config) in next_generation_configs.iter().enumerate() {
+            let config_path = next_generation_dir.join(format!("individual_{i}.json"));
+            let json = serde_json::to_string_pretty(config).expect("Failed to serialize config");
+            fs::write(config_path, json).expect("Failed to write config file");
         }
 
-        let mut rng = rand::thread_rng();
-
-        // Elitism: Copy the top individuals to the next generation.
-        // The number of elites is the smaller of 5 or the number of available parents.
-        let num_elites = parents.len().min(5);
-        for (i, elite) in parents.iter().enumerate().take(num_elites) {
-            let elite_config_path = next_generation_dir.join(format!("individual_{i}.json"));
-            let json = serde_json::to_string_pretty(&elite.config).expect("Failed to serialize elite config");
-            fs::write(elite_config_path, json).expect("Failed to write elite config file");
-        }
-
-        // Breeding & Mutation: Create the remaining individuals.
-        for i in num_elites..POPULATION_SIZE {
-            // Select two random parents from the parent pool
-            let parent1 = parents[rng.gen_range(0..parents.len())];
-            let parent2 = parents[rng.gen_range(0..parents.len())];
-
-            // Create the child by crossing over parameters
-            let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
-
-            // Mutate the child
-            mutate(&mut child_config, &mut rng);
-
-            let child_config_path = next_generation_dir.join(format!("individual_{i}.json"));
-            let json = serde_json::to_string_pretty(&child_config).expect("Failed to serialize child config");
-            fs::write(child_config_path, json).expect("Failed to write child config file");
-        }
-        self.send_status(format!("Generated and saved {POPULATION_SIZE} new individuals for the next generation."))?;
+        self.send_status(format!("Generated and saved {} new individuals for the next generation.", next_generation_configs.len()))?;
         Ok(())
     }
 
@@ -1026,56 +1062,9 @@ fn generate_initial_population(generation_dir: &Path) {
     let mut rng = rand::thread_rng();
 
     for i in 0..POPULATION_SIZE {
-        let mut config = SearchConfig::default();
-        let default_config = SearchConfig::default(); // for reference values
-
-        config.search_depth = rng.gen_range(3..=5);
-
-        // Randomize booleans
-        config.use_aspiration_windows = rng.gen_bool(0.5);
-        config.use_history_heuristic = rng.gen_bool(0.5);
-        config.use_killer_moves = rng.gen_bool(0.5);
-        config.use_quiescence_search = rng.gen_bool(0.5);
-        config.use_pvs = rng.gen_bool(0.5);
-        config.use_null_move_pruning = rng.gen_bool(0.5);
-        config.use_lmr = rng.gen_bool(0.5);
-        config.use_futility_pruning = rng.gen_bool(0.5);
-        config.use_delta_pruning = rng.gen_bool(0.5);
-
-        // Randomize enum
-        config.search_algorithm = SearchAlgorithm::Pvs;
-
-        // Randomize numeric values with +/- 50% variance
-        config.mcts_simulations = vary_numeric(default_config.mcts_simulations as i32, &mut rng) as u32;
-        config.pawn_structure_weight = vary_numeric(default_config.pawn_structure_weight, &mut rng);
-        config.piece_mobility_weight = vary_numeric(default_config.piece_mobility_weight, &mut rng);
-        config.king_safety_weight = vary_numeric(default_config.king_safety_weight, &mut rng);
-        config.piece_development_weight = vary_numeric(default_config.piece_development_weight, &mut rng);
-        config.rook_placement_weight = vary_numeric(default_config.rook_placement_weight, &mut rng);
-        config.bishop_placement_weight = vary_numeric(default_config.bishop_placement_weight, &mut rng);
-        config.knight_placement_weight = vary_numeric(default_config.knight_placement_weight, &mut rng);
-        config.passed_pawn_weight = vary_numeric(default_config.passed_pawn_weight, &mut rng);
-        config.isolated_pawn_weight = vary_numeric(default_config.isolated_pawn_weight, &mut rng);
-        config.doubled_pawn_weight = vary_numeric(default_config.doubled_pawn_weight, &mut rng);
-        config.bishop_pair_weight = vary_numeric(default_config.bishop_pair_weight, &mut rng);
-        config.pawn_chain_weight = vary_numeric(default_config.pawn_chain_weight, &mut rng);
-        config.ram_weight = vary_numeric(default_config.ram_weight, &mut rng);
-        config.candidate_passed_pawn_weight = vary_numeric(default_config.candidate_passed_pawn_weight, &mut rng);
-        config.king_pawn_shield_weight = vary_numeric(default_config.king_pawn_shield_weight, &mut rng);
-        config.king_open_file_penalty = vary_numeric(default_config.king_open_file_penalty, &mut rng);
-        config.king_attackers_weight = vary_numeric(default_config.king_attackers_weight, &mut rng);
-        config.threat_analysis_weight = vary_numeric(default_config.threat_analysis_weight, &mut rng);
-        config.tempo_bonus_weight = vary_numeric(default_config.tempo_bonus_weight, &mut rng);
-        config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight, &mut rng);
-        config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight, &mut rng);
-
+        let config = SearchConfig::default_with_randomization(&mut rng);
         let file_path = generation_dir.join(format!("individual_{i}.json"));
         let json = serde_json::to_string_pretty(&config).expect("Failed to serialize config");
         fs::write(file_path, json).expect("Failed to write config file");
     }
-}
-
-fn vary_numeric(value: i32, rng: &mut impl Rng) -> i32 {
-    let factor = rng.gen_range(-0.5..=0.5);
-    (value as f64 * (1.0 + factor)).round() as i32
 }

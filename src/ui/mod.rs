@@ -41,7 +41,7 @@ fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
 
     for (i, (match_id, match_state)) in sorted_matches.iter().enumerate() {
         let match_pane_area = content_layout[i];
-        draw_match_pane(frame, match_pane_area, *match_id, match_state);
+        draw_match_pane(frame, match_pane_area, match_id, match_state);
     }
 }
 
@@ -136,7 +136,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
         .gauge_style(Style::default().fg(if cpu_usage > 80.0 { Color::Red } else { Color::Green }))
         .percent(cpu_usage as u16)
-        .label(format!("{:.2}%", cpu_usage));
+        .label(format!("{cpu_usage:.2}%"));
     frame.render_widget(cpu_gauge, status_chunks[1]);
 
     // Memory Status
@@ -180,7 +180,7 @@ fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
         .components
         .iter()
         .map(|c| {
-            let temp = c.temperature().map(|t| format!("{:.2}°C", t)).unwrap_or_else(|| "N/A".to_string());
+            let temp = c.temperature().map(|t| format!("{t:.2}°C")).unwrap_or_else(|| "N/A".to_string());
             Line::from(format!("{}: {}", c.label(), temp))
         })
         .collect();
