@@ -8,11 +8,6 @@ use std::collections::HashMap;
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct CpuState {
-    pub usage: f32,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct ComponentState {
     pub label: String,
     pub temperature: f32,
@@ -27,7 +22,6 @@ pub struct WebsocketState {
     pub cpu_usage: f32,
     pub memory_usage: u64,
     pub total_memory: u64,
-    pub cpus: Vec<CpuState>,
     pub components: Vec<ComponentState>,
     // Evolution state
     pub evolution_current_generation: u32,

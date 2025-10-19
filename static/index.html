@@ -135,13 +135,6 @@
             padding: 0.5em;
             overflow-y: auto;
         }
-        .system-stat {
-            padding: 0.5em;
-            flex: 1;
-            text-align: center;
-            overflow-y: auto;
-            height: 50%;
-        }
     </style>
 </head>
 <body>
@@ -391,23 +384,15 @@
             const container = document.getElementById('system-stats-container');
             container.innerHTML = ''; // Clear previous stats
 
-            const cpuDiv = document.createElement('div');
-            cpuDiv.className = 'system-stat';
-            let cpuHtml = '<h2>CPU Core Usage</h2>';
-            state.cpus.forEach((cpu, index) => {
-                cpuHtml += `<div>Core ${index}: ${cpu.usage.toFixed(2)}%</div>`;
-            });
-            cpuDiv.innerHTML = cpuHtml;
-
             const tempDiv = document.createElement('div');
             tempDiv.className = 'system-stat';
+            tempDiv.style.height = '100%';
             let tempHtml = '<h2>Temperatures</h2>';
             state.components.forEach(component => {
                 tempHtml += `<div>${component.label}: ${component.temperature.toFixed(2)}°C</div>`;
             });
             tempDiv.innerHTML = tempHtml;
 
-            container.appendChild(cpuDiv);
             container.appendChild(tempDiv);
         }
     </script>

@@ -41,7 +41,7 @@ fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
 
     for (i, (match_id, match_state)) in sorted_matches.iter().enumerate() {
         let match_pane_area = content_layout[i];
-        draw_match_pane(frame, match_pane_area, *match_id, match_state);
+        draw_match_pane(frame, match_pane_area, match_id, match_state);
     }
 }
 
@@ -136,7 +136,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title("CPU Usage"))
         .gauge_style(Style::default().fg(if cpu_usage > 80.0 { Color::Red } else { Color::Green }))
         .percent(cpu_usage as u16)
-        .label(format!("{:.2}%", cpu_usage));
+        .label(format!("{cpu_usage:.2}%"));
     frame.render_widget(cpu_gauge, status_chunks[1]);
 
     // Memory Status
@@ -157,37 +157,19 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
-    let stats_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    // CPU Core Usage
-    let cpu_text: Vec<Line> = app
-        .system
-        .cpus()
-        .iter()
-        .enumerate()
-        .map(|(i, cpu)| Line::from(format!("Core {}: {:.2}%", i, cpu.cpu_usage())))
-        .collect();
-    let cpu_paragraph = Paragraph::new(cpu_text)
-        .block(Block::default().borders(Borders::ALL).title("CPU Core Usage"))
-        .wrap(Wrap { trim: true });
-    frame.render_widget(cpu_paragraph, stats_layout[0]);
-
     // Component Temperatures
     let temp_text: Vec<Line> = app
         .components
         .iter()
         .map(|c| {
-            let temp = c.temperature().map(|t| format!("{:.2}°C", t)).unwrap_or_else(|| "N/A".to_string());
+            let temp = c.temperature().map(|t| format!("{t:.2}°C")).unwrap_or_else(|| "N/A".to_string());
             Line::from(format!("{}: {}", c.label(), temp))
         })
         .collect();
     let temp_paragraph = Paragraph::new(temp_text)
         .block(Block::default().borders(Borders::ALL).title("Temperatures"))
         .wrap(Wrap { trim: true });
-    frame.render_widget(temp_paragraph, stats_layout[1]);
+    frame.render_widget(temp_paragraph, area);
 }
 
 fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
