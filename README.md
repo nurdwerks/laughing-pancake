@@ -127,6 +127,13 @@ This evaluates the strategic positioning of specific pieces.
 *   **Space**: Measures territorial control by counting the number of squares on the opponent's side of the board that are safely controlled by friendly pawns.
 *   **Tempo**: A small, static bonus is added to the evaluation for the player whose turn it is to move.
 
+#### 2.2.9. Heuristic Component 6: Pressure and Weaknesses
+To encourage a more aggressive and pressuring playing style, several advanced evaluation terms were introduced:
+*   **Enhanced King Attack**: This goes beyond the basic king safety heuristic by actively rewarding the AI for pointing its pieces at the opponent's king. It calculates a score based on the value of pieces attacking the squares in the king's immediate vicinity, directly incentivizing the formation of attacks.
+*   **Advanced Passed Pawns**: The simple passed pawn bonus is replaced with a more nuanced evaluation. Pawns are scored based on their rank (closer to promotion is better), whether they are supported by other pawns, and the clarity of their path to the final rank.
+*   **Opponent Weakness Evaluation**: The engine is trained to identify and exploit structural weaknesses. This includes bonuses for attacking backward or isolated pawns, occupying weak squares (outposts) in the opponent's territory, and creating pins against more valuable pieces.
+*   **Threat Bonus**: A small, static bonus is added for any move that attacks an opponent's piece, even if that piece is defended. This encourages the AI to constantly create tactical problems for the opponent, seizing the initiative.
+
 ### 2.3. Tree Search Algorithms
 
 The evaluation function can only score a single position. To find the best move, the AI must look ahead and explore the tree of possible future moves. The engine implements two primary search algorithms, though only PVS is currently used in the genetic algorithm.

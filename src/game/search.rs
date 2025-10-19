@@ -56,6 +56,9 @@ pub struct SearchConfig {
     pub tempo_bonus_weight: i32,
     pub space_evaluation_weight: i32,
     pub initiative_evaluation_weight: i32,
+    pub enhanced_king_attack_weight: i32,
+    pub advanced_passed_pawn_weight: i32,
+    pub opponent_weakness_weight: i32,
 }
 
 impl SearchConfig {
@@ -108,6 +111,9 @@ impl SearchConfig {
         config.tempo_bonus_weight = vary_numeric(default_config.tempo_bonus_weight);
         config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight);
         config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight);
+        config.enhanced_king_attack_weight = vary_numeric(default_config.enhanced_king_attack_weight);
+        config.advanced_passed_pawn_weight = vary_numeric(default_config.advanced_passed_pawn_weight);
+        config.opponent_weakness_weight = vary_numeric(default_config.opponent_weakness_weight);
 
         config
     }
@@ -149,6 +155,9 @@ impl Default for SearchConfig {
             tempo_bonus_weight: 10,
             space_evaluation_weight: 100,
             initiative_evaluation_weight: 100,
+            enhanced_king_attack_weight: 100,
+            advanced_passed_pawn_weight: 100,
+            opponent_weakness_weight: 100,
         }
     }
 }

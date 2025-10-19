@@ -12,6 +12,7 @@ pub const CENTRALIZATION_BONUS: i32 = 10;
 // Threat Evaluation
 pub const UNDEFENDED_PIECE_BONUS_FACTOR: i32 = 10; // 10% of piece value
 pub const GOOD_TRADE_BONUS_FACTOR: i32 = 5;      // 5% of piece value
+pub const TACTICAL_PRESSURE_BONUS: i32 = 2;
 
 // Rook Evaluation
 pub const ROOK_OPEN_FILE_BONUS: i32 = 20;
