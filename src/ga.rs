@@ -794,11 +794,49 @@ impl Population {
     /// Loads a population from a generation directory.
     pub fn load(generation_dir: &Path) -> Self {
         let mut individuals = Vec::new();
+        let mut rng = rand::thread_rng();
+
         for i in 0..POPULATION_SIZE {
             let file_path = generation_dir.join(format!("individual_{i}.json"));
-            let json = fs::read_to_string(file_path).expect("Failed to read individual file");
-            let individual: Individual =
-                serde_json::from_str(&json).expect("Failed to deserialize individual");
+            let individual = match fs::read_to_string(&file_path) {
+                Ok(json) => match serde_json::from_str::<Individual>(&json) {
+                    Ok(mut ind) => {
+                        if ind.id != i {
+                            let warning_msg = format!(
+                                "Warning: Individual file {:?} has mismatched ID {}. Correcting to {}.",
+                                file_path, ind.id, i
+                            );
+                            EVENT_BROKER.publish(Event::StatusUpdate(warning_msg));
+                            ind.id = i;
+                        }
+                        ind
+                    }
+                    Err(e) => {
+                        let warning_msg = format!(
+                            "Warning: Failed to deserialize {:?}: {}. Replacing with new random individual.",
+                            file_path, e
+                        );
+                        EVENT_BROKER.publish(Event::StatusUpdate(warning_msg));
+                        Individual {
+                            id: i,
+                            config: SearchConfig::default_with_randomization(&mut rng),
+                            elo: STARTING_ELO,
+                        }
+                    }
+                },
+                Err(e) => {
+                    let warning_msg = format!(
+                        "Warning: Failed to read {:?}: {}. Replacing with new random individual.",
+                        file_path, e
+                    );
+                    EVENT_BROKER.publish(Event::StatusUpdate(warning_msg));
+                    Individual {
+                        id: i,
+                        config: SearchConfig::default_with_randomization(&mut rng),
+                        elo: STARTING_ELO,
+                    }
+                }
+            };
             individuals.push(individual);
         }
         Self { individuals }
