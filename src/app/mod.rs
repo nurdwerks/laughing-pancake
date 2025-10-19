@@ -2,10 +2,7 @@
 
 use crate::{
     constants::NUM_ROUNDS,
-    event::{
-        ActiveMatchState, ComponentState, CpuState, Event, WebsocketState, WorkerState,
-        EVENT_BROKER,
-    },
+    event::{ActiveMatchState, ComponentState, Event, WebsocketState, WorkerState, EVENT_BROKER},
     ga, ui,
 };
 use crossterm::event::{self, KeyCode};
@@ -294,14 +291,6 @@ impl App {
             cpu_usage: self.cpu_usage,
             memory_usage: self.memory_usage,
             total_memory: self.total_memory,
-            cpus: self
-                .system
-                .cpus()
-                .iter()
-                .map(|c| CpuState {
-                    usage: c.cpu_usage(),
-                })
-                .collect(),
             components: self
                 .components
                 .iter()
