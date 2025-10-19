@@ -13,6 +13,9 @@ pub mod bishops;
 pub mod knights;
 pub mod threats;
 pub mod initiative;
+pub mod king_attack;
+pub mod passed_pawns;
+pub mod opponent_weakness;
 
 use shakmaty::{Board, Chess, Color, Piece, Position, Role};
 use crate::constants::{
@@ -123,7 +126,10 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         + config.knight_placement_weight
         + config.threat_analysis_weight
         + config.space_evaluation_weight
-        + config.initiative_evaluation_weight;
+        + config.initiative_evaluation_weight
+        + config.enhanced_king_attack_weight
+        + config.advanced_passed_pawn_weight
+        + config.opponent_weakness_weight;
 
     if total_weight > 0 {
         white_score += pawn_structure::evaluate(board, Color::White, config) * config.pawn_structure_weight / total_weight;
@@ -155,6 +161,15 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
 
         white_score += initiative::evaluate(board, Color::White) * config.initiative_evaluation_weight / total_weight;
         black_score += initiative::evaluate(board, Color::Black) * config.initiative_evaluation_weight / total_weight;
+
+        white_score += king_attack::evaluate(pos, Color::White) * config.enhanced_king_attack_weight / total_weight;
+        black_score += king_attack::evaluate(pos, Color::Black) * config.enhanced_king_attack_weight / total_weight;
+
+        white_score += passed_pawns::evaluate(board, Color::White) * config.advanced_passed_pawn_weight / total_weight;
+        black_score += passed_pawns::evaluate(board, Color::Black) * config.advanced_passed_pawn_weight / total_weight;
+
+        white_score += opponent_weakness::evaluate(pos, Color::White) * config.opponent_weakness_weight / total_weight;
+        black_score += opponent_weakness::evaluate(pos, Color::Black) * config.opponent_weakness_weight / total_weight;
     }
 
     let total_score = white_score - black_score;

@@ -935,6 +935,9 @@ fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> Search
         tempo_bonus_weight: if rng.gen_bool(0.5) { p1.tempo_bonus_weight } else { p2.tempo_bonus_weight },
         space_evaluation_weight: if rng.gen_bool(0.5) { p1.space_evaluation_weight } else { p2.space_evaluation_weight },
         initiative_evaluation_weight: if rng.gen_bool(0.5) { p1.initiative_evaluation_weight } else { p2.initiative_evaluation_weight },
+        enhanced_king_attack_weight: if rng.gen_bool(0.5) { p1.enhanced_king_attack_weight } else { p2.enhanced_king_attack_weight },
+        advanced_passed_pawn_weight: if rng.gen_bool(0.5) { p1.advanced_passed_pawn_weight } else { p2.advanced_passed_pawn_weight },
+        opponent_weakness_weight: if rng.gen_bool(0.5) { p1.opponent_weakness_weight } else { p2.opponent_weakness_weight },
     }
 }
 
@@ -982,6 +985,9 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
     config.tempo_bonus_weight = mutate_numeric(config.tempo_bonus_weight, rng);
     config.space_evaluation_weight = mutate_numeric(config.space_evaluation_weight, rng);
     config.initiative_evaluation_weight = mutate_numeric(config.initiative_evaluation_weight, rng);
+    config.enhanced_king_attack_weight = mutate_numeric(config.enhanced_king_attack_weight, rng);
+    config.advanced_passed_pawn_weight = mutate_numeric(config.advanced_passed_pawn_weight, rng);
+    config.opponent_weakness_weight = mutate_numeric(config.opponent_weakness_weight, rng);
 }
 
 /// Decides if a mutation should occur and, if so, by how much.

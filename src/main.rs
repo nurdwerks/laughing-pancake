@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 
     // setup terminal
-    let mut terminal = Terminal::new(CrosstermBackend::new(std::io.stdout()))?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
 
     // create app and run it
     let mut app = App::new(git_hash);
