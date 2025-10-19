@@ -58,6 +58,61 @@ pub struct SearchConfig {
     pub initiative_evaluation_weight: i32,
 }
 
+impl SearchConfig {
+    pub fn default_with_randomization(rng: &mut impl rand::Rng) -> Self {
+        let mut config = Self::default();
+        let default_config = Self::default(); // for reference values
+
+        config.search_depth = rng.gen_range(3..=5);
+
+        // Randomize booleans
+        config.use_aspiration_windows = rng.gen_bool(0.5);
+        config.use_history_heuristic = rng.gen_bool(0.5);
+        config.use_killer_moves = rng.gen_bool(0.5);
+        config.use_quiescence_search = rng.gen_bool(0.5);
+        config.use_pvs = rng.gen_bool(0.5);
+        config.use_null_move_pruning = rng.gen_bool(0.5);
+        config.use_lmr = rng.gen_bool(0.5);
+        config.use_futility_pruning = rng.gen_bool(0.5);
+        config.use_delta_pruning = rng.gen_bool(0.5);
+
+        // Randomize enum
+        config.search_algorithm = SearchAlgorithm::Pvs;
+
+        // Helper function for numeric randomization
+        let mut vary_numeric = |value: i32| -> i32 {
+            let factor = rng.gen_range(-0.5..=0.5);
+            (value as f64 * (1.0 + factor)).round() as i32
+        };
+
+        // Randomize numeric values with +/- 50% variance
+        config.mcts_simulations = vary_numeric(default_config.mcts_simulations as i32) as u32;
+        config.pawn_structure_weight = vary_numeric(default_config.pawn_structure_weight);
+        config.piece_mobility_weight = vary_numeric(default_config.piece_mobility_weight);
+        config.king_safety_weight = vary_numeric(default_config.king_safety_weight);
+        config.piece_development_weight = vary_numeric(default_config.piece_development_weight);
+        config.rook_placement_weight = vary_numeric(default_config.rook_placement_weight);
+        config.bishop_placement_weight = vary_numeric(default_config.bishop_placement_weight);
+        config.knight_placement_weight = vary_numeric(default_config.knight_placement_weight);
+        config.passed_pawn_weight = vary_numeric(default_config.passed_pawn_weight);
+        config.isolated_pawn_weight = vary_numeric(default_config.isolated_pawn_weight);
+        config.doubled_pawn_weight = vary_numeric(default_config.doubled_pawn_weight);
+        config.bishop_pair_weight = vary_numeric(default_config.bishop_pair_weight);
+        config.pawn_chain_weight = vary_numeric(default_config.pawn_chain_weight);
+        config.ram_weight = vary_numeric(default_config.ram_weight);
+        config.candidate_passed_pawn_weight = vary_numeric(default_config.candidate_passed_pawn_weight);
+        config.king_pawn_shield_weight = vary_numeric(default_config.king_pawn_shield_weight);
+        config.king_open_file_penalty = vary_numeric(default_config.king_open_file_penalty);
+        config.king_attackers_weight = vary_numeric(default_config.king_attackers_weight);
+        config.threat_analysis_weight = vary_numeric(default_config.threat_analysis_weight);
+        config.tempo_bonus_weight = vary_numeric(default_config.tempo_bonus_weight);
+        config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight);
+        config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight);
+
+        config
+    }
+}
+
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
