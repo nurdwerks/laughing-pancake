@@ -1075,9 +1075,13 @@ fn generate_initial_population(generation_dir: &Path) {
     let mut rng = rand::thread_rng();
 
     for i in 0..POPULATION_SIZE {
-        let config = SearchConfig::default_with_randomization(&mut rng);
+        let individual = Individual {
+            id: i,
+            config: SearchConfig::default_with_randomization(&mut rng),
+            elo: STARTING_ELO,
+        };
         let file_path = generation_dir.join(format!("individual_{i}.json"));
-        let json = serde_json::to_string_pretty(&config).expect("Failed to serialize config");
-        fs::write(file_path, json).expect("Failed to write config file");
+        let json = serde_json::to_string_pretty(&individual).expect("Failed to serialize individual");
+        fs::write(file_path, json).expect("Failed to write individual file");
     }
 }
