@@ -19,8 +19,8 @@ const EVOLUTION_DIR: &str = "evolution";
 /// Manages evaluation caches for all players in the tournament.
 /// Caches are created on-demand and automatically destroyed when no longer in use.
 struct CacheManager {
-    caches: Arc<Mutex<HashMap<String, Arc<Mutex<EvaluationCache>>>>>,
-    usage_count: Arc<Mutex<HashMap<String, usize>>>,
+    caches: Arc<Mutex<HashMap<SearchConfig, Arc<Mutex<EvaluationCache>>>>>,
+    usage_count: Arc<Mutex<HashMap<SearchConfig, usize>>>,
 }
 
 impl CacheManager {
@@ -31,23 +31,23 @@ impl CacheManager {
         }
     }
 
-    /// Gets a cache for a specific player.
+    /// Gets a cache for a specific AI configuration.
     /// This will create a cache if one doesn't exist.
     /// It returns a `CacheGuard`, which will automatically decrement the usage count
     /// when it goes out of scope.
-    fn get_cache_for_player(&self, player_name: &str) -> CacheGuard {
+    fn get_cache_for_config(&self, config: &SearchConfig) -> CacheGuard {
         let mut caches = self.caches.lock().unwrap();
         let mut usage_count = self.usage_count.lock().unwrap();
 
         let cache = caches
-            .entry(player_name.to_string())
+            .entry(config.clone())
             .or_insert_with(|| Arc::new(Mutex::new(EvaluationCache::new())))
             .clone();
 
-        *usage_count.entry(player_name.to_string()).or_insert(0) += 1;
+        *usage_count.entry(config.clone()).or_insert(0) += 1;
 
         CacheGuard {
-            player_name: player_name.to_string(),
+            config: config.clone(),
             cache: cache.clone(),
             cache_manager: self.clone(),
         }
@@ -55,15 +55,15 @@ impl CacheManager {
 
     /// Called by `CacheGuard` when it's dropped.
     /// Decrements the usage count for a player's cache and removes it if the count is zero.
-    fn release_cache(&self, player_name: &str) {
+    fn release_cache(&self, config: &SearchConfig) {
         let mut caches = self.caches.lock().unwrap();
         let mut usage_count = self.usage_count.lock().unwrap();
 
-        if let Some(count) = usage_count.get_mut(player_name) {
+        if let Some(count) = usage_count.get_mut(config) {
             *count -= 1;
             if *count == 0 {
-                usage_count.remove(player_name);
-                caches.remove(player_name);
+                usage_count.remove(config);
+                caches.remove(config);
             }
         }
     }
@@ -81,14 +81,14 @@ impl Clone for CacheManager {
 /// A guard that holds a reference to a player's cache.
 /// When this guard is dropped, it notifies the `CacheManager` to decrement the usage count.
 struct CacheGuard {
-    player_name: String,
+    config: SearchConfig,
     cache: Arc<Mutex<EvaluationCache>>,
     cache_manager: CacheManager,
 }
 
 impl Drop for CacheGuard {
     fn drop(&mut self) {
-        self.cache_manager.release_cache(&self.player_name);
+        self.cache_manager.release_cache(&self.config);
     }
 }
 
@@ -153,6 +153,8 @@ impl EvolutionManager {
         }
 
 
+        let cache_manager = CacheManager::new();
+
         loop {
             if *self.should_quit.lock().unwrap() {
                 self.send_status("Shutdown signal received, stopping evolution.".to_string())?;
@@ -165,8 +167,6 @@ impl EvolutionManager {
             let base_population = Population::load(&generation_dir);
             let mut generation = self.load_or_create_generation(generation_index, &base_population)?;
             self.send_status(format!("Loaded {} individuals for generation {generation_index}.", generation.population.individuals.len()))?;
-
-            let cache_manager = CacheManager::new();
 
             self.run_tournament(&mut generation, &cache_manager)?;
 
@@ -321,9 +321,9 @@ impl EvolutionManager {
         // --- Stage 4: Finalize and save the new generation ---
         for (i, individual) in next_generation.iter_mut().enumerate() {
             individual.id = i;
-            let config_path = next_generation_dir.join(format!("individual_{i}.json"));
-            let json = serde_json::to_string_pretty(&individual.config).expect("Failed to serialize config");
-            fs::write(config_path, json).expect("Failed to write config file");
+            let individual_path = next_generation_dir.join(format!("individual_{}.json", i));
+            let json = serde_json::to_string_pretty(individual).expect("Failed to serialize individual");
+            fs::write(individual_path, json).expect("Failed to write individual file");
         }
 
         self.send_status(format!("Generated and saved {} unique individuals for the next generation.", next_generation.len()))?;
@@ -528,13 +528,13 @@ fn play_round_matches(
                     let white_player_name = game_match.white_player_name.clone();
                     let black_player_name = game_match.black_player_name.clone();
 
-                    let white_cache_guard = cache_manager_clone.get_cache_for_player(&white_player_name);
-                    let black_cache_guard = cache_manager_clone.get_cache_for_player(&black_player_name);
-
                     let white_id = parse_id_from_name(&white_player_name);
                     let black_id = parse_id_from_name(&black_player_name);
                     let white_config = &population_clone.individuals[white_id].config;
                     let black_config = &population_clone.individuals[black_id].config;
+
+                    let white_cache_guard = cache_manager_clone.get_cache_for_config(white_config);
+                    let black_cache_guard = cache_manager_clone.get_cache_for_config(black_config);
 
                     EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
                     if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
@@ -796,14 +796,10 @@ impl Population {
         let mut individuals = Vec::new();
         for i in 0..POPULATION_SIZE {
             let file_path = generation_dir.join(format!("individual_{i}.json"));
-            let json = fs::read_to_string(file_path).expect("Failed to read config file");
-            let config: SearchConfig = serde_json::from_str(&json).expect("Failed to deserialize config");
-
-            individuals.push(Individual {
-                id: i,
-                config,
-                elo: STARTING_ELO, // Starting ELO
-            });
+            let json = fs::read_to_string(file_path).expect("Failed to read individual file");
+            let individual: Individual =
+                serde_json::from_str(&json).expect("Failed to deserialize individual");
+            individuals.push(individual);
         }
         Self { individuals }
     }
