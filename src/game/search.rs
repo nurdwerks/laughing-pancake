@@ -15,13 +15,13 @@ use crate::constants::MATE_SCORE;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SearchAlgorithm {
     Pvs,
     Mcts,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SearchConfig {
     pub search_depth: u8,
     pub search_algorithm: SearchAlgorithm,

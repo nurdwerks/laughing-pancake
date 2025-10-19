@@ -62,3 +62,6 @@ pub const CENTER_CONTROL_BONUS: i32 = 5;
 
 // Search
 pub const MATE_SCORE: i32 = 1_000_000;
+
+// Match Settings
+pub const ENABLE_MOVE_LIMIT: bool = false;

@@ -10,7 +10,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::app::Worker;
-use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE};
+use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE, ENABLE_MOVE_LIMIT};
 use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 
@@ -222,100 +222,111 @@ impl EvolutionManager {
         self.send_status("\nEvolving to the next generation...".to_string())?;
         let mut rng = rand::thread_rng();
 
-        // Partition the population based on ELO.
-        let parents: Vec<Individual> = population
-            .individuals
-            .iter()
-            .filter(|i| i.elo > STARTING_ELO)
-            .cloned()
-            .collect();
+        // --- Stage 1: Create a pool of potential individuals for the next generation ---
 
-        let advancers: Vec<Individual> = population
-            .individuals
-            .iter()
-            .filter(|i| i.elo == STARTING_ELO)
-            .cloned()
-            .collect();
+        let mut next_generation_pool: Vec<Individual> = Vec::with_capacity(POPULATION_SIZE * 2);
 
-        let mut next_generation_configs: Vec<SearchConfig> = Vec::with_capacity(POPULATION_SIZE);
+        // Add parents (ELO > STARTING_ELO) and advancers (ELO == STARTING_ELO)
+        let parents: Vec<Individual> = population.individuals.iter().filter(|i| i.elo > STARTING_ELO).cloned().collect();
+        let advancers: Vec<Individual> = population.individuals.iter().filter(|i| i.elo == STARTING_ELO).cloned().collect();
+        next_generation_pool.extend(parents.clone());
+        next_generation_pool.extend(advancers.clone());
 
-        // Add all parents and advancers to the next generation (elitism).
-        next_generation_configs.extend(parents.iter().map(|p| p.config.clone()));
-        next_generation_configs.extend(advancers.iter().map(|a| a.config.clone()));
+        self.send_status(format!("{} individuals with ELO > {} are promoted as parents.", parents.len(), STARTING_ELO))?;
+        self.send_status(format!("{} individuals with ELO = {} are advanced.", advancers.len(), STARTING_ELO))?;
 
-        self.send_status(format!(
-            "{} individuals with ELO > {} are promoted as parents.",
-            parents.len(),
-            STARTING_ELO
-        ))?;
-        self.send_status(format!(
-            "{} individuals with ELO = {} are advanced to the next generation.",
-            advancers.len(),
-            STARTING_ELO
-        ))?;
-
-
-        let num_remaining = POPULATION_SIZE - next_generation_configs.len();
-
+        // Add children created by crossover and mutation
+        let num_children = POPULATION_SIZE; // Create a full set of children to ensure diversity
         match parents.len() {
             0 => {
-                self.send_status(
-                    "No parents for breeding. Filling empty slots with new random individuals."
-                        .to_string(),
-                )?;
-                for _ in 0..num_remaining {
-                    next_generation_configs.push(SearchConfig::default_with_randomization(&mut rng));
-                }
-
-                if advancers.len() == POPULATION_SIZE {
-                    self.send_status(
-                        "Population has stagnated. Mutating 10% of the population.".to_string(),
-                    )?;
-                    let num_to_mutate = (POPULATION_SIZE as f32 * 0.1).round() as usize;
-                    let indices_to_mutate = (0..POPULATION_SIZE).collect::<Vec<usize>>();
-                    let chosen_indices = indices_to_mutate.choose_multiple(&mut rng, num_to_mutate);
-
-                    for &index in chosen_indices {
-                        mutate(&mut next_generation_configs[index], &mut rng);
-                    }
+                self.send_status("No parents for breeding. Creating new random individuals.".to_string())?;
+                for _ in 0..num_children {
+                    next_generation_pool.push(Individual {
+                        id: 0, // Placeholder ID
+                        config: SearchConfig::default_with_randomization(&mut rng),
+                        elo: STARTING_ELO,
+                    });
                 }
             }
             1 => {
-                self.send_status(
-                    "Only one parent available. Filling empty slots with mutated clones.".to_string(),
-                )?;
+                self.send_status("Only one parent available. Creating mutated clones.".to_string())?;
                 let parent_config = &parents[0].config;
-                for _ in 0..num_remaining {
+                for _ in 0..num_children {
                     let mut child_config = parent_config.clone();
                     mutate(&mut child_config, &mut rng);
-                    next_generation_configs.push(child_config);
+                    next_generation_pool.push(Individual {
+                        id: 0, // Placeholder ID
+                        config: child_config,
+                        elo: STARTING_ELO,
+                    });
                 }
             }
             _ => {
-                // More than one parent, use crossover.
-                self.send_status(format!(
-                    "Selected {} parents. Breeding {} new individuals...",
-                    parents.len(),
-                    num_remaining
-                ))?;
-                for _ in 0..num_remaining {
+                self.send_status(format!("Selected {} parents. Breeding {} new individuals...", parents.len(), num_children))?;
+                for _ in 0..num_children {
                     let parent1 = &parents[rng.gen_range(0..parents.len())];
                     let parent2 = &parents[rng.gen_range(0..parents.len())];
                     let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
                     mutate(&mut child_config, &mut rng);
-                    next_generation_configs.push(child_config);
+                    next_generation_pool.push(Individual {
+                        id: 0, // Placeholder ID
+                        config: child_config,
+                        elo: STARTING_ELO,
+                    });
                 }
             }
         }
 
-        // Save the new generation to files.
-        for (i, config) in next_generation_configs.iter().enumerate() {
+        // --- Stage 2: Filter out clones, keeping the one with the highest ELO ---
+
+        let mut unique_individuals = HashMap::new();
+        for individual in next_generation_pool {
+            unique_individuals.entry(individual.config.clone())
+                .and_modify(|existing: &mut Individual| {
+                    if individual.elo > existing.elo {
+                        *existing = individual.clone();
+                    }
+                })
+                .or_insert(individual);
+        }
+
+        let mut next_generation: Vec<Individual> = unique_individuals.values().cloned().collect();
+        let num_clones_removed = (parents.len() + advancers.len() + num_children) - next_generation.len();
+        self.send_status(format!("Removed {} clone(s) from the population.", num_clones_removed))?;
+
+        // --- Stage 3: Repopulate if necessary, ensuring new individuals are not clones ---
+        while next_generation.len() < POPULATION_SIZE {
+            let new_config = SearchConfig::default_with_randomization(&mut rng);
+
+            // Ensure the new random config is not already in the unique set
+            if !unique_individuals.contains_key(&new_config) {
+                let new_individual = Individual {
+                    id: 0, // Placeholder
+                    config: new_config.clone(),
+                    elo: STARTING_ELO,
+                };
+                unique_individuals.insert(new_config, new_individual.clone());
+                next_generation.push(new_individual);
+            }
+        }
+
+        // If we have too many, truncate the list. This could happen if the initial pool had
+        // more than POPULATION_SIZE unique individuals. We'll sort by ELO and take the top.
+        if next_generation.len() > POPULATION_SIZE {
+            next_generation.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+            next_generation.truncate(POPULATION_SIZE);
+        }
+
+
+        // --- Stage 4: Finalize and save the new generation ---
+        for (i, individual) in next_generation.iter_mut().enumerate() {
+            individual.id = i;
             let config_path = next_generation_dir.join(format!("individual_{i}.json"));
-            let json = serde_json::to_string_pretty(config).expect("Failed to serialize config");
+            let json = serde_json::to_string_pretty(&individual.config).expect("Failed to serialize config");
             fs::write(config_path, json).expect("Failed to write config file");
         }
 
-        self.send_status(format!("Generated and saved {} new individuals for the next generation.", next_generation_configs.len()))?;
+        self.send_status(format!("Generated and saved {} unique individuals for the next generation.", next_generation.len()))?;
         Ok(())
     }
 
@@ -631,7 +642,7 @@ fn play_round_matches(
         let mut game_result_override = None;
         while !pos.is_game_over() {
             // End the game in a draw after 100 moves (200 half-moves/plies).
-            if sans.len() >= 200 {
+            if ENABLE_MOVE_LIMIT && sans.len() >= 200 {
                 game_result_override = Some(GameResult::Draw);
                 break;
             }
