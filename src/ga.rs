@@ -513,10 +513,12 @@ fn play_round_matches(
         .collect();
 
     let skipped_matches = matches_to_play.len() - pending_matches.len();
-    if skipped_matches > 0 {
+    if skipped_matches > 0 || pending_matches.is_empty() {
         self.send_status(format!(
-            "Skipping {} completed matches for round {}.",
-            skipped_matches, generation.round
+            "Round {}: {} matches to play ({} already completed).",
+            generation.round,
+            pending_matches.len(),
+            skipped_matches
         ))?;
     }
 
@@ -576,12 +578,15 @@ fn play_round_matches(
                 break;
             }
         }
-    drop(jobs_tx);
+    drop(jobs_tx); // Close the jobs channel, workers will exit after finishing their work.
+    drop(results_tx); // Drop the main thread's sender to ensure the channel closes correctly
 
-    drop(results_tx); // Drop original sender
-
-        // Process results as they come in
-    for (match_index, mut current_match, result, san) in results_rx {
+    // Process results as they come in.
+    // We explicitly loop only for the number of matches we dispatched.
+    // This prevents the process from hanging if a worker thread panics or stalls.
+    let mut matches_processed = 0;
+    while matches_processed < pending_matches.len() {
+        if let Ok((match_index, mut current_match, result, san)) = results_rx.recv() {
             current_match.san = san;
             current_match.status = "completed".to_string();
 
@@ -624,7 +629,21 @@ fn play_round_matches(
                 result: current_match.result.clone(),
             };
             EVENT_BROKER.publish(Event::MatchCompleted(match_index, result_event));
+            matches_processed += 1;
+            self.send_status(format!(
+                "Round {}: {}/{} matches completed.",
+                generation.round,
+                matches_processed + skipped_matches,
+                total_matches
+            ))?;
+        } else {
+            // Channel is empty and disconnected, means all senders (workers) are gone.
+            // This can happen if all workers panic.
+            self.send_status("Error: Worker channel disconnected unexpectedly. Ending round.".to_string())?;
+            break;
         }
+    }
+        drop(results_rx);
 
         // Wait for all worker threads to finish
         for handle in worker_handles {
