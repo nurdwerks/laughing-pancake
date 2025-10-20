@@ -209,9 +209,12 @@ impl App {
                     let white_name = result.white_player_name.replace(".json", "");
                     let black_name = result.black_player_name.replace(".json", "");
 
+                    let white_num = extract_player_number(&white_name);
+                    let black_num = extract_player_number(&black_name);
+
                     self.log_message(format!(
                         "M {}: {} vs {} ({})",
-                        match_id, white_name, black_name, result.result
+                        match_id, white_num, black_num, result.result
                     ));
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
@@ -340,5 +343,13 @@ impl App {
                 })
                 .collect(),
         }
+    }
+}
+
+fn extract_player_number(name: &str) -> &str {
+    if let Some(pos) = name.rfind(|c: char| !c.is_ascii_digit()) {
+        &name[pos + 1..]
+    } else {
+        name
     }
 }
