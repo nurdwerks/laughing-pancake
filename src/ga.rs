@@ -653,12 +653,6 @@ fn play_round_matches(
             };
             EVENT_BROKER.publish(Event::MatchCompleted(match_index, result_event));
             matches_processed += 1;
-            self.send_status(format!(
-                "Round {}: {}/{} matches completed.",
-                generation.round,
-                matches_processed + skipped_matches,
-                total_matches
-            ))?;
         } else {
             // Channel is empty and disconnected, means all senders (workers) are gone.
             // This can happen if all workers panic.

@@ -202,9 +202,17 @@ impl App {
                     };
                     self.active_matches.insert(match_id, match_state);
                 }
-                Event::MatchCompleted(match_id, _result) => {
+                Event::MatchCompleted(match_id, result) => {
                     self.evolution_matches_completed += 1;
                     self.active_matches.remove(&match_id);
+
+                    let white_name = result.white_player_name.replace(".json", "");
+                    let black_name = result.black_player_name.replace(".json", "");
+
+                    self.log_message(format!(
+                        "M {}: {} vs {} ({})",
+                        match_id, white_name, black_name, result.result
+                    ));
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
