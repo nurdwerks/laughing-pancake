@@ -248,14 +248,36 @@ impl EvolutionManager {
             // Survivors are the winners. Add them to the pool.
             next_generation_pool.extend(winners.clone());
 
-            let num_offspring = (POPULATION_SIZE as f64 / 2.0).ceil() as usize;
+            let num_offspring = (POPULATION_SIZE as f64 * 0.75).round() as usize;
             let num_random = POPULATION_SIZE.saturating_sub(num_offspring);
 
-            self.send_status(format!("Breeding {} new offspring.", num_offspring))?;
+            self.send_status(format!("Breeding {num_offspring} new offspring."))?;
+
+            // Create a weighted distribution for parent selection (w^2)
+            let weights: Vec<u32> = winners
+                .iter()
+                .map(|i| {
+                    let wins = win_counts.get(&i.id).cloned().unwrap_or(0);
+                    wins * wins
+                })
+                .collect();
+
+            let dist = rand::distributions::WeightedIndex::new(&weights).unwrap();
+
             for _ in 0..num_offspring {
-                let parent1 = winners.choose(&mut rng).unwrap();
-                let parent2 = winners.choose(&mut rng).unwrap();
-                let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
+                let parent1_index = dist.sample(&mut rng);
+                let parent1 = &winners[parent1_index];
+                let parent2_index = dist.sample(&mut rng);
+                let parent2 = &winners[parent2_index];
+
+                let mut child_config = if parent1.id == parent2.id {
+                    // Asexual reproduction: clone and mutate
+                    parent1.config.clone()
+                } else {
+                    // Sexual reproduction: crossover
+                    crossover(&parent1.config, &parent2.config, &mut rng)
+                };
+
                 mutate(&mut child_config, &mut rng);
                 next_generation_pool.push(Individual {
                     id: 0, // Placeholder
@@ -264,7 +286,7 @@ impl EvolutionManager {
                 });
             }
 
-            self.send_status(format!("Introducing {} new random individuals.", num_random))?;
+            self.send_status(format!("Introducing {num_random} new random individuals."))?;
             for _ in 0..num_random {
                 next_generation_pool.push(Individual {
                     id: 0, // Placeholder
@@ -285,7 +307,7 @@ impl EvolutionManager {
             let survivors: Vec<Individual> = sorted_population.into_iter().take(num_survivors).collect();
             next_generation_pool.extend(survivors);
 
-            self.send_status(format!("Replacing {} individuals with new random ones.", num_to_replace))?;
+            self.send_status(format!("Replacing {num_to_replace} individuals with new random ones."))?;
             for _ in 0..num_to_replace {
                  next_generation_pool.push(Individual {
                     id: 0, // Placeholder
@@ -310,20 +332,20 @@ impl EvolutionManager {
 
         let mut next_generation: Vec<Individual> = unique_individuals.values().cloned().collect();
         let num_clones_removed = initial_pool_size - next_generation.len();
-        self.send_status(format!("Removed {} clone(s) from the population.", num_clones_removed))?;
+        self.send_status(format!("Removed {num_clones_removed} clone(s) from the population."))?;
 
         // --- Stage 3: Repopulate if necessary, ensuring new individuals are not clones ---
         while next_generation.len() < POPULATION_SIZE {
             let new_config = SearchConfig::default_with_randomization(&mut rng);
 
             // Ensure the new random config is not already in the unique set
-            if !unique_individuals.contains_key(&new_config) {
+            if let std::collections::hash_map::Entry::Vacant(e) = unique_individuals.entry(new_config.clone()) {
                 let new_individual = Individual {
                     id: 0, // Placeholder
-                    config: new_config.clone(),
+                    config: new_config,
                     elo: STARTING_ELO,
                 };
-                unique_individuals.insert(new_config, new_individual.clone());
+                e.insert(new_individual.clone());
                 next_generation.push(new_individual);
             }
         }
@@ -333,13 +355,13 @@ impl EvolutionManager {
         if next_generation.len() > POPULATION_SIZE {
             next_generation.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
             next_generation.truncate(POPULATION_SIZE);
-            self.send_status(format!("Population truncated to {} individuals based on ELO.", POPULATION_SIZE))?;
+            self.send_status(format!("Population truncated to {POPULATION_SIZE} individuals based on ELO."))?;
         }
 
         // --- Stage 4: Finalize and save the new generation ---
         for (i, individual) in next_generation.iter_mut().enumerate() {
             individual.id = i;
-            let individual_path = next_generation_dir.join(format!("individual_{}.json", i));
+            let individual_path = next_generation_dir.join(format!("individual_{i}.json"));
             let json = serde_json::to_string_pretty(individual).expect("Failed to serialize individual");
             fs::write(individual_path, json).expect("Failed to write individual file");
         }
@@ -867,8 +889,7 @@ impl Population {
                     }
                     Err(e) => {
                         let warning_msg = format!(
-                            "Warning: Failed to deserialize {:?}: {}. Replacing with new random individual.",
-                            file_path, e
+                            "Warning: Failed to deserialize {file_path:?}: {e}. Replacing with new random individual."
                         );
                         EVENT_BROKER.publish(Event::StatusUpdate(warning_msg));
                         Individual {
@@ -880,8 +901,7 @@ impl Population {
                 },
                 Err(e) => {
                     let warning_msg = format!(
-                        "Warning: Failed to read {:?}: {}. Replacing with new random individual.",
-                        file_path, e
+                        "Warning: Failed to read {file_path:?}: {e}. Replacing with new random individual."
                     );
                     EVENT_BROKER.publish(Event::StatusUpdate(warning_msg));
                     Individual {
