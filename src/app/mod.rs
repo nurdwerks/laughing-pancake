@@ -180,6 +180,20 @@ impl App {
                     self.evolution_total_matches = 0;
                     self.active_matches.clear();
                 }
+                Event::GenerationComplete(stats) => {
+                    let log_message = format!(
+                        "Gen {}: {} matches (W:{} B:{} D:{}), ELOs (Top: {:.2}, Avg: {:.2}, Low: {:.2})",
+                        stats.generation_index,
+                        stats.num_matches,
+                        stats.white_wins,
+                        stats.black_wins,
+                        stats.draws,
+                        stats.top_elo,
+                        stats.average_elo,
+                        stats.lowest_elo
+                    );
+                    self.log_message(log_message);
+                }
                 Event::MatchStarted(match_id, white_player, black_player) => {
                     let match_state = ActiveMatch {
                         white_player,
@@ -188,25 +202,9 @@ impl App {
                     };
                     self.active_matches.insert(match_id, match_state);
                 }
-                Event::MatchCompleted(match_id, result) => {
+                Event::MatchCompleted(match_id, _result) => {
                     self.evolution_matches_completed += 1;
                     self.active_matches.remove(&match_id);
-
-                    let _white_name = result.white_player_name.replace(".json", "");
-                    let _black_name = result.black_player_name.replace(".json", "");
-
-                    let result_char = match result.result.as_str() {
-                        "1-0" => "W",
-                        "0-1" => "B",
-                        "1/2-1/2" => "D",
-                        _ => "?",
-                    };
-
-                    let log_message = format!(
-                        "M {} ({}) {:.2} {:.2}",
-                        match_id, result_char, result.white_new_elo, result.black_new_elo
-                    );
-                    self.log_message(log_message);
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {

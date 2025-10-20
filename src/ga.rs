@@ -398,6 +398,29 @@ impl EvolutionManager {
             individual.elo
         ))?;
     }
+
+    let white_wins = generation.matches.iter().filter(|m| m.result == "1-0").count();
+    let black_wins = generation.matches.iter().filter(|m| m.result == "0-1").count();
+    let draws = generation.matches.iter().filter(|m| m.result == "1/2-1/2").count();
+    let elos: Vec<f64> = generation.population.individuals.iter().map(|i| i.elo).collect();
+    let top_elo = elos.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let lowest_elo = elos.iter().cloned().fold(f64::INFINITY, f64::min);
+    let average_elo = elos.iter().sum::<f64>() / elos.len() as f64;
+
+
+    let stats = crate::event::GenerationStats {
+        generation_index: generation.generation_index,
+        num_matches: generation.matches.len(),
+        white_wins,
+        black_wins,
+        draws,
+        top_elo,
+        average_elo,
+        lowest_elo,
+    };
+    EVENT_BROKER.publish(Event::GenerationComplete(stats));
+
+
     Ok(())
 }
 
