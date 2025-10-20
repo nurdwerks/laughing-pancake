@@ -171,7 +171,7 @@ impl EvolutionManager {
             self.run_tournament(&mut generation, &cache_manager)?;
 
             let next_generation_dir = setup_directories(generation_index + 1);
-            self.evolve_population(&generation.population, &next_generation_dir)?;
+            self.evolve_population(&generation, &next_generation_dir)?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
@@ -218,67 +218,85 @@ impl EvolutionManager {
     }
 
     /// Takes a completed tournament population and evolves it to create the next generation.
-    fn evolve_population(&self, population: &Population, next_generation_dir: &Path) -> Result<(), ()> {
+    fn evolve_population(&self, generation: &Generation, next_generation_dir: &Path) -> Result<(), ()> {
         self.send_status("\nEvolving to the next generation...".to_string())?;
         let mut rng = rand::thread_rng();
 
-        // --- Stage 1: Create a pool of potential individuals for the next generation ---
+        // --- Stage 1: Determine survivors and create the initial pool for the next generation ---
+        let mut win_counts = HashMap::new();
+        for m in &generation.matches {
+            if m.result == "1-0" {
+                let winner_id = parse_id_from_name(&m.white_player_name);
+                *win_counts.entry(winner_id).or_insert(0) += 1;
+            } else if m.result == "0-1" {
+                let winner_id = parse_id_from_name(&m.black_player_name);
+                *win_counts.entry(winner_id).or_insert(0) += 1;
+            }
+        }
+
+        let winners: Vec<Individual> = generation.population.individuals.iter()
+            .filter(|i| win_counts.get(&i.id).cloned().unwrap_or(0) >= 1)
+            .cloned()
+            .collect();
 
         let mut next_generation_pool: Vec<Individual> = Vec::with_capacity(POPULATION_SIZE * 2);
 
-        // Add parents (ELO > STARTING_ELO) and advancers (ELO == STARTING_ELO)
-        let parents: Vec<Individual> = population.individuals.iter().filter(|i| i.elo > STARTING_ELO).cloned().collect();
-        let advancers: Vec<Individual> = population.individuals.iter().filter(|i| i.elo == STARTING_ELO).cloned().collect();
-        next_generation_pool.extend(parents.clone());
-        next_generation_pool.extend(advancers.clone());
+        if !winners.is_empty() {
+            // --- Winner Scenario ---
+            self.send_status(format!("{} individuals secured at least one win and will form the elite breeding pool.", winners.len()))?;
 
-        self.send_status(format!("{} individuals with ELO > {} are promoted as parents.", parents.len(), STARTING_ELO))?;
-        self.send_status(format!("{} individuals with ELO = {} are advanced.", advancers.len(), STARTING_ELO))?;
+            // Survivors are the winners. Add them to the pool.
+            next_generation_pool.extend(winners.clone());
 
-        // Add children created by crossover and mutation
-        let num_children = POPULATION_SIZE; // Create a full set of children to ensure diversity
-        match parents.len() {
-            0 => {
-                self.send_status("No parents for breeding. Creating new random individuals.".to_string())?;
-                for _ in 0..num_children {
-                    next_generation_pool.push(Individual {
-                        id: 0, // Placeholder ID
-                        config: SearchConfig::default_with_randomization(&mut rng),
-                        elo: STARTING_ELO,
-                    });
-                }
+            let num_offspring = (POPULATION_SIZE as f64 / 2.0).ceil() as usize;
+            let num_random = POPULATION_SIZE.saturating_sub(num_offspring);
+
+            self.send_status(format!("Breeding {} new offspring.", num_offspring))?;
+            for _ in 0..num_offspring {
+                let parent1 = winners.choose(&mut rng).unwrap();
+                let parent2 = winners.choose(&mut rng).unwrap();
+                let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
+                mutate(&mut child_config, &mut rng);
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: child_config,
+                    elo: STARTING_ELO,
+                });
             }
-            1 => {
-                self.send_status("Only one parent available. Creating mutated clones.".to_string())?;
-                let parent_config = &parents[0].config;
-                for _ in 0..num_children {
-                    let mut child_config = parent_config.clone();
-                    mutate(&mut child_config, &mut rng);
-                    next_generation_pool.push(Individual {
-                        id: 0, // Placeholder ID
-                        config: child_config,
-                        elo: STARTING_ELO,
-                    });
-                }
+
+            self.send_status(format!("Introducing {} new random individuals.", num_random))?;
+            for _ in 0..num_random {
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: SearchConfig::default_with_randomization(&mut rng),
+                    elo: STARTING_ELO,
+                });
             }
-            _ => {
-                self.send_status(format!("Selected {} parents. Breeding {} new individuals...", parents.len(), num_children))?;
-                for _ in 0..num_children {
-                    let parent1 = &parents[rng.gen_range(0..parents.len())];
-                    let parent2 = &parents[rng.gen_range(0..parents.len())];
-                    let mut child_config = crossover(&parent1.config, &parent2.config, &mut rng);
-                    mutate(&mut child_config, &mut rng);
-                    next_generation_pool.push(Individual {
-                        id: 0, // Placeholder ID
-                        config: child_config,
-                        elo: STARTING_ELO,
-                    });
-                }
+
+        } else {
+            // --- No-Winner Scenario ---
+            self.send_status("No individual secured a win. Replacing the bottom 25% by ELO.".to_string())?;
+            let mut sorted_population = generation.population.individuals.clone();
+            sorted_population.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+
+            let num_survivors = (POPULATION_SIZE as f64 * 0.75).round() as usize;
+            let num_to_replace = POPULATION_SIZE - num_survivors;
+
+            let survivors: Vec<Individual> = sorted_population.into_iter().take(num_survivors).collect();
+            next_generation_pool.extend(survivors);
+
+            self.send_status(format!("Replacing {} individuals with new random ones.", num_to_replace))?;
+            for _ in 0..num_to_replace {
+                 next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: SearchConfig::default_with_randomization(&mut rng),
+                    elo: STARTING_ELO,
+                });
             }
         }
 
         // --- Stage 2: Filter out clones, keeping the one with the highest ELO ---
-
+        let initial_pool_size = next_generation_pool.len();
         let mut unique_individuals = HashMap::new();
         for individual in next_generation_pool {
             unique_individuals.entry(individual.config.clone())
@@ -291,7 +309,7 @@ impl EvolutionManager {
         }
 
         let mut next_generation: Vec<Individual> = unique_individuals.values().cloned().collect();
-        let num_clones_removed = (parents.len() + advancers.len() + num_children) - next_generation.len();
+        let num_clones_removed = initial_pool_size - next_generation.len();
         self.send_status(format!("Removed {} clone(s) from the population.", num_clones_removed))?;
 
         // --- Stage 3: Repopulate if necessary, ensuring new individuals are not clones ---
@@ -315,8 +333,8 @@ impl EvolutionManager {
         if next_generation.len() > POPULATION_SIZE {
             next_generation.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
             next_generation.truncate(POPULATION_SIZE);
+            self.send_status(format!("Population truncated to {} individuals based on ELO.", POPULATION_SIZE))?;
         }
-
 
         // --- Stage 4: Finalize and save the new generation ---
         for (i, individual) in next_generation.iter_mut().enumerate() {
@@ -983,6 +1001,8 @@ fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> Search
         enhanced_king_attack_weight: if rng.gen_bool(0.5) { p1.enhanced_king_attack_weight } else { p2.enhanced_king_attack_weight },
         advanced_passed_pawn_weight: if rng.gen_bool(0.5) { p1.advanced_passed_pawn_weight } else { p2.advanced_passed_pawn_weight },
         opponent_weakness_weight: if rng.gen_bool(0.5) { p1.opponent_weakness_weight } else { p2.opponent_weakness_weight },
+        contempt_factor: if rng.gen_bool(0.5) { p1.contempt_factor } else { p2.contempt_factor },
+        draw_avoidance_margin: if rng.gen_bool(0.5) { p1.draw_avoidance_margin } else { p2.draw_avoidance_margin },
     }
 }
 
@@ -1033,6 +1053,8 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
     config.enhanced_king_attack_weight = mutate_numeric(config.enhanced_king_attack_weight, rng);
     config.advanced_passed_pawn_weight = mutate_numeric(config.advanced_passed_pawn_weight, rng);
     config.opponent_weakness_weight = mutate_numeric(config.opponent_weakness_weight, rng);
+    config.contempt_factor = mutate_numeric(config.contempt_factor, rng);
+    config.draw_avoidance_margin = mutate_numeric(config.draw_avoidance_margin, rng);
 }
 
 /// Decides if a mutation should occur and, if so, by how much.
@@ -1121,5 +1143,95 @@ fn generate_initial_population(generation_dir: &Path) {
         let file_path = generation_dir.join(format!("individual_{i}.json"));
         let json = serde_json::to_string_pretty(&individual).expect("Failed to serialize individual");
         fs::write(file_path, json).expect("Failed to write individual file");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn create_mock_individual(id: usize, elo: f64) -> Individual {
+        Individual {
+            id,
+            config: SearchConfig::default(),
+            elo,
+        }
+    }
+
+    #[test]
+    fn test_evolve_population_winner_scenario() {
+        let temp_dir = tempdir().unwrap();
+        let next_gen_dir = temp_dir.path().join("generation_1");
+        fs::create_dir(&next_gen_dir).unwrap();
+
+        let mut individuals = Vec::new();
+        // Create a population where one individual clearly won
+        individuals.push(create_mock_individual(0, 1300.0)); // Winner
+        individuals.push(create_mock_individual(1, 1100.0));
+        for i in 2..POPULATION_SIZE {
+            individuals.push(create_mock_individual(i, 1200.0));
+        }
+
+        let population = Population { individuals };
+        let mut generation = Generation {
+            generation_index: 0,
+            round: NUM_ROUNDS,
+            population,
+            matches: vec![
+                Match { round: 1, white_player_name: "individual_0.json".to_string(), black_player_name: "individual_1.json".to_string(), status: "completed".to_string(), result: "1-0".to_string(), san: "".to_string() }
+            ],
+            previous_matchups: HashSet::new(),
+            white_games_played: HashMap::new(),
+            black_games_played: HashMap::new(),
+            round_pairings: Vec::new(),
+        };
+
+        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+        evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
+
+        // Check that the next generation was created
+        assert!(next_gen_dir.join("individual_0.json").exists());
+        let next_gen_population = Population::load(&next_gen_dir);
+        assert_eq!(next_gen_population.individuals.len(), POPULATION_SIZE);
+
+        // Verify that the winner is among the survivors in the new population's gene pool (indirectly)
+        // This is tricky to assert directly, but we can check the number of files.
+        let num_files = fs::read_dir(next_gen_dir).unwrap().count();
+        assert_eq!(num_files, POPULATION_SIZE);
+    }
+
+    #[test]
+    fn test_evolve_population_no_winner_scenario() {
+        let temp_dir = tempdir().unwrap();
+        let next_gen_dir = temp_dir.path().join("generation_1");
+        fs::create_dir(&next_gen_dir).unwrap();
+
+        let mut individuals = Vec::new();
+        // Create a population where everyone draws, but with different ELOs
+        for i in 0..POPULATION_SIZE {
+            individuals.push(create_mock_individual(i, 1200.0 + (i as f64 * 10.0)));
+        }
+
+        let population = Population { individuals };
+        let mut generation = Generation {
+            generation_index: 0,
+            round: NUM_ROUNDS,
+            population,
+            matches: vec![
+                 Match { round: 1, white_player_name: "individual_0.json".to_string(), black_player_name: "individual_1.json".to_string(), status: "completed".to_string(), result: "1/2-1/2".to_string(), san: "".to_string() }
+            ],
+            previous_matchups: HashSet::new(),
+            white_games_played: HashMap::new(),
+            black_games_played: HashMap::new(),
+            round_pairings: Vec::new(),
+        };
+
+        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+        evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
+
+        // Check that the next generation was created
+        let next_gen_population = Population::load(&next_gen_dir);
+        assert_eq!(next_gen_population.individuals.len(), POPULATION_SIZE);
     }
 }

@@ -62,6 +62,17 @@ After the tournament concludes, a new generation is created using the following 
 
 This cycle of tournament play, fitness evaluation, and reproduction continues, gradually evolving the population towards more sophisticated and effective chess-playing strategies.
 
+#### 2.1.4. Enhanced Selection and Draw Reduction
+Initial observations of the genetic algorithm revealed two areas for improvement: the selection process was too lenient, often allowing a large number of individuals to survive, and the high frequency of draws diluted the selection pressure, making it difficult to differentiate between genuinely strong individuals and those skilled at forcing neutral outcomes. To address this, two key enhancements were implemented.
+
+1.  **Strict "Win-Based" Culling**: The original elitism model was replaced with a stricter, more competitive culling mechanism. Under the new system, only individuals who achieve at least one win during the 7-round tournament are considered "survivors." This elite group is then used as the sole breeding pool for the next generation. The new population is formed by combining offspring from this elite pool with a fresh injection of new, randomly generated individuals to maintain genetic diversity. This method directly rewards decisive play and ensures that only proven winners contribute their genetic material to future generations. In the edge case where no individual secures a win, the system falls back to a modified ELO-based approach, culling the bottom 25% of the population and replacing them with new random individuals.
+
+2.  **Evolvable Contempt Factor**: To directly combat the high number of draws, a "contempt factor" was introduced into the evaluation function. This is an evolvable parameter that allows an AI to view a drawn or neutral position with disdain. The `SearchConfig` was augmented with two new parameters:
+    *   `contempt_factor`: A value (in centipawns) that is subtracted from the evaluation score of a neutral position.
+    *   `draw_avoidance_margin`: An ELO range around zero that defines what is considered a "neutral" position.
+
+    During evaluation, if the score of a position is within the `draw_avoidance_margin`, the `contempt_factor` is subtracted from it. This encourages the AI to avoid drawish lines and take calculated risks to play for a win, even in seemingly equal positions. By making these parameters evolvable, the GA can self-tune the optimal level of risk-taking, fostering the emergence of a more aggressive and decisive playing style.
+
 ### 2.2. The Static Evaluation Function
 
 The evaluation function assigns a numerical score in "centipawns" to a given chess position. A positive score favors White, while a negative score favors Black. The function is highly modular, combining material count, piece-square tables, and numerous weighted heuristic components. This modularity is key to the genetic algorithm's success, as it allows for the fine-tuning of the engine's playing style.
