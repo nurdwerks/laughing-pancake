@@ -169,6 +169,7 @@ impl App {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
                 Event::TournamentStart(round, total_matches, skipped_matches) => {
+                    self.active_matches.clear();
                     self.evolution_current_round = round;
                     self.evolution_total_matches = total_matches;
                     self.evolution_matches_completed = skipped_matches;
