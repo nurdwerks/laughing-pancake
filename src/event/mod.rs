@@ -63,8 +63,6 @@ pub enum WsMessage {
 pub struct MatchResult {
     pub white_player_name: String,
     pub black_player_name: String,
-    pub white_new_elo: f64,
-    pub black_new_elo: f64,
     pub result: String,
 }
 
