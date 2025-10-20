@@ -303,3 +303,44 @@ fn test_opponent_weakness() {
     let score = opponent_weakness::evaluate(&pos, shakmaty::Color::White);
     assert_eq!(score, 15);
 }
+
+#[test]
+fn test_contempt_factor_applied() {
+    let pos = Chess::default(); // Nearly equal position
+    let mut config = SearchConfig::default();
+    config.contempt_factor = 20;
+    config.draw_avoidance_margin = 50;
+    config.tempo_bonus_weight = 10;
+
+    // Get a base score without the contempt factor to isolate its effect
+    let base_score = {
+        let mut temp_config = config.clone();
+        temp_config.contempt_factor = 0;
+        temp_config.draw_avoidance_margin = 0;
+        evaluate(&pos, &temp_config)
+    };
+
+    // Ensure the base score is within the margin for the test to be valid
+    assert!(base_score.abs() < config.draw_avoidance_margin);
+
+    let final_score = evaluate(&pos, &config);
+
+    // Expected: base_score - contempt_factor
+    assert_eq!(final_score, base_score - config.contempt_factor);
+}
+
+#[test]
+fn test_contempt_factor_not_applied() {
+    let fen: Fen = "4k3/8/8/8/8/8/8/4K2Q w - - 0 1".parse().unwrap(); // White has a massive advantage
+    let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+    let mut config = SearchConfig::default();
+    config.contempt_factor = 20;
+    config.draw_avoidance_margin = 50;
+
+    let score = evaluate(&pos, &config);
+
+    // The score should be very high, far outside the draw_avoidance_margin,
+    // so the contempt factor should not be applied.
+    assert!(score > 850);
+    assert_eq!(score, evaluate(&pos, &SearchConfig::default()));
+}

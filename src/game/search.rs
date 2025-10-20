@@ -59,6 +59,8 @@ pub struct SearchConfig {
     pub enhanced_king_attack_weight: i32,
     pub advanced_passed_pawn_weight: i32,
     pub opponent_weakness_weight: i32,
+    pub contempt_factor: i32,
+    pub draw_avoidance_margin: i32,
 }
 
 impl SearchConfig {
@@ -114,6 +116,8 @@ impl SearchConfig {
         config.enhanced_king_attack_weight = vary_numeric(default_config.enhanced_king_attack_weight);
         config.advanced_passed_pawn_weight = vary_numeric(default_config.advanced_passed_pawn_weight);
         config.opponent_weakness_weight = vary_numeric(default_config.opponent_weakness_weight);
+        config.contempt_factor = rng.gen_range(0..=50);
+        config.draw_avoidance_margin = rng.gen_range(0..=100);
 
         config
     }
@@ -158,6 +162,8 @@ impl Default for SearchConfig {
             enhanced_king_attack_weight: 100,
             advanced_passed_pawn_weight: 100,
             opponent_weakness_weight: 100,
+            contempt_factor: 0,
+            draw_avoidance_margin: 0,
         }
     }
 }

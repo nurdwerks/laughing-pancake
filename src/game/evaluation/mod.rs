@@ -181,7 +181,14 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         -total_score
     };
 
-    perspective_score + config.tempo_bonus_weight
+    let final_score = perspective_score + config.tempo_bonus_weight;
+
+    // Apply contempt factor conditionally
+    if final_score.abs() < config.draw_avoidance_margin {
+        final_score - config.contempt_factor
+    } else {
+        final_score
+    }
 }
 
 #[cfg(test)]
