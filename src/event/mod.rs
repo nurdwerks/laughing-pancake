@@ -68,6 +68,19 @@ pub struct MatchResult {
     pub result: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct GenerationStats {
+    pub generation_index: u32,
+    pub num_matches: usize,
+    pub white_wins: usize,
+    pub black_wins: usize,
+    pub draws: usize,
+    pub top_elo: f64,
+    pub average_elo: f64,
+    pub lowest_elo: f64,
+}
+
+
 /// Defines all possible events that can occur in the application.
 #[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
@@ -76,6 +89,7 @@ pub enum Event {
     // Events used by the TUI and backend logic
     TournamentStart(usize, usize, usize),
     GenerationStarted(u32),
+    GenerationComplete(GenerationStats),
     MatchStarted(usize, String, String),
     MatchCompleted(usize, MatchResult),
     ThinkingUpdate(usize, String, i32),
