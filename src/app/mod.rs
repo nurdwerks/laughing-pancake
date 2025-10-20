@@ -176,6 +176,7 @@ impl App {
                 }
                 Event::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
+					self.evolution_current_round = 0;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 0;
                     self.active_matches.clear();

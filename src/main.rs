@@ -1,13 +1,13 @@
-use std::error::Error;
-use std::process;
-use std::thread;
-use std::panic;
-use ratatui::Terminal;
-use ratatui::prelude::CrosstermBackend;
 use crate::app::App;
-use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
 use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
+use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
+use ratatui::prelude::CrosstermBackend;
+use ratatui::Terminal;
+use std::error::Error;
+use std::panic;
+use std::process;
+use std::thread;
 
 mod app;
 mod ui;

@@ -189,6 +189,7 @@ impl EvolutionManager {
                     // Ensure the population loaded from the JSON is used, as it contains ELO scores.
                     // The population passed in is the base from the individual files, without ELO updates.
                     gen.population.individuals.sort_by_key(|i| i.id); // Ensure consistent order
+                    *self.match_id_counter.lock().unwrap() = gen.match_id_counter;
                     return Ok(gen);
                 } else {
                     self.send_status(format!("Warning: Found corrupt generation file at {file_path:?}. Starting generation from scratch."))?;
@@ -214,6 +215,7 @@ impl EvolutionManager {
             white_games_played: HashMap::new(),
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
+            match_id_counter: 0,
         })
     }
 
@@ -243,27 +245,29 @@ impl EvolutionManager {
 
         if !winners.is_empty() {
             // --- Winner Scenario ---
-            self.send_status(format!("{} individuals secured at least one win and will form the elite breeding pool.", winners.len()))?;
+            self.send_status(format!("{} individuals secured at least one win and will carry over to the next generation.", winners.len()))?;
 
             // Survivors are the winners. Add them to the pool.
             next_generation_pool.extend(winners.clone());
 
-            let num_offspring = (POPULATION_SIZE as f64 * 0.75).round() as usize;
-            let num_random = POPULATION_SIZE.saturating_sub(num_offspring);
+            let remaining_slots = POPULATION_SIZE.saturating_sub(winners.len());
+            let num_offspring = (remaining_slots as f64 * 0.75).round() as usize;
+            let num_random = remaining_slots.saturating_sub(num_offspring);
 
-            self.send_status(format!("Breeding {num_offspring} new offspring."))?;
+
+            self.send_status(format!("Breeding {num_offspring} new offspring from the winners."))?;
 
             // Create a weighted distribution for parent selection (w^2)
-            let weights: Vec<u32> = winners
-                .iter()
-                .map(|i| {
-                    let wins = win_counts.get(&i.id).cloned().unwrap_or(0);
-                    wins * wins
-                })
-                .collect();
+            if num_offspring > 0 {
+                let weights: Vec<u32> = winners
+                    .iter()
+                    .map(|i| {
+                        let wins = win_counts.get(&i.id).cloned().unwrap_or(0);
+                        wins * wins
+                    })
+                    .collect();
 
-            let dist = rand::distributions::WeightedIndex::new(&weights).unwrap();
-
+                let dist = rand::distributions::WeightedIndex::new(&weights).unwrap();
             for _ in 0..num_offspring {
                 let parent1_index = dist.sample(&mut rng);
                 let parent1 = &winners[parent1_index];
@@ -285,6 +289,7 @@ impl EvolutionManager {
                     elo: STARTING_ELO,
                 });
             }
+        }
 
             self.send_status(format!("Introducing {num_random} new random individuals."))?;
             for _ in 0..num_random {
@@ -394,6 +399,7 @@ impl EvolutionManager {
                 self.send_status("Generating pairings for the round.".to_string())?;
                 generation.round_pairings =
                     self.generate_pairings(generation, round);
+                generation.match_id_counter = *self.match_id_counter.lock().unwrap();
                 save_generation(generation);
             } else {
                 self.send_status("Using existing pairings for the round.".to_string())?;
@@ -405,6 +411,7 @@ impl EvolutionManager {
             generation.round_pairings.clear();
 
             // 3. Save state after each round
+            generation.match_id_counter = *self.match_id_counter.lock().unwrap();
             save_generation(generation);
             self.send_status(format!("Round {round} complete. Saved progress."))?;
         }
@@ -669,8 +676,6 @@ fn play_round_matches(
             let result_event = MatchResult {
                 white_player_name: current_match.white_player_name.clone(),
                 black_player_name: current_match.black_player_name.clone(),
-                white_new_elo: new_white_elo,
-                black_new_elo: new_black_elo,
                 result: current_match.result.clone(),
             };
             EVENT_BROKER.publish(Event::MatchCompleted(match_index, result_event));
@@ -941,6 +946,8 @@ pub struct Generation {
     pub black_games_played: HashMap<usize, u32>,
     #[serde(default)]
     pub round_pairings: Vec<Match>,
+	#[serde(default)]
+    pub match_id_counter: usize,
 }
 
 // Helper for serializing HashSet<(A, B)>
@@ -1241,6 +1248,7 @@ mod tests {
             white_games_played: HashMap::new(),
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
+            match_id_counter: 0,
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
@@ -1281,6 +1289,7 @@ mod tests {
             white_games_played: HashMap::new(),
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
+            match_id_counter: 0,
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
