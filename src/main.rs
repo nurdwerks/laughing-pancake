@@ -1,13 +1,4 @@
-use crate::app::App;
-use crossterm::event::DisableMouseCapture;
-use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
-use ratatui::prelude::CrosstermBackend;
-use ratatui::Terminal;
-use std::error::Error;
-use std::panic;
-use std::process;
-use std::thread;
+
 
 mod app;
 mod ui;
@@ -31,12 +22,16 @@ struct Args {
     /// Path to the PGN opening book file
     #[arg(long)]
     opening_book: Option<String>,
+
+    /// Enable the Text-based User Interface (TUI)
+    #[arg(long)]
+    enable_tui: bool,
 }
 
 #[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let _args = Args::parse();
+    let args = Args::parse();
 
     // Get the git hash
     let git_hash = match process::Command::new("git")
@@ -61,27 +56,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("{msg}");
     }));
 
-
-    // setup terminal
-    let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
-
-    // create app and run it
     let mut app = App::new(git_hash);
-    let res = app.run(&mut terminal).await;
 
-    // restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
+    if args.enable_tui {
+        // TUI mode
+        let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
+        let res = app.run_tui(&mut terminal).await;
 
-    if let Err(err) = res {
-        println!("{err:?}");
-        process::exit(1);
-    } else if let Some(err) = app.error_message {
+        // Restore terminal
+        disable_raw_mode()?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )?;
+        terminal.show_cursor()?;
+
+        if let Err(err) = res {
+            println!("{err:?}");
+            process::exit(1);
+        }
+    } else {
+        // Headless mode
+        println!("Running in headless mode. Use --enable-tui to show the interface.");
+        let res = app.run_headless().await;
+        if let Err(err) = res {
+            eprintln!("Headless mode error: {err:?}");
+            process::exit(1);
+        }
+    }
+
+    if let Some(err) = app.error_message {
         println!("Application exited with an error: {err}");
         process::exit(1);
     } else {
