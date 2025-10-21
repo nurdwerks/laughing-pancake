@@ -3,47 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Generation Details</title>
+    <title>Generations</title>
     <link rel="stylesheet" href="main_style.css">
+    <style>
+        .collapsible {
+            cursor: pointer;
+            padding: 18px;
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-size: 15px;
+            background-color: #777;
+            color: white;
+            margin-top: 5px;
+        }
+
+        .active, .collapsible:hover {
+            background-color: #555;
+        }
+
+        .content {
+            padding: 0 18px;
+            display: none;
+            overflow: hidden;
+            background-color: #f1f1f1;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1 id="generation-title"></h1>
-        <h2>Individuals</h2>
-        <table id="individuals-table">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>ELO</th>
-                    <th>Configuration</th>
-                </tr>
-            </thead>
-            <tbody>
-                <!-- Data will be inserted here by JavaScript -->
-            </tbody>
-        </table>
+        <h1>Generations</h1>
+        <div id="generations-list">
+            <!-- Generations will be loaded here -->
+        </div>
     </div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            const generationsList = document.getElementById('generations-list');
             const params = new URLSearchParams(window.location.search);
-            const genId = params.get('gen');
+            const requestedGenId = params.get('gen');
 
-            document.getElementById('generation-title').textContent = `Generation ${genId}`;
-
-            fetch(`/api/generation/${genId}`)
+            fetch('/api/generations')
                 .then(response => response.json())
-                .then(data => {
-                    const tableBody = document.querySelector('#individuals-table tbody');
-                    data.population.individuals.forEach(ind => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td><a href="individual.html?gen=${genId}&ind=${ind.id}">${ind.id}</a></td>
-                            <td>${ind.elo.toFixed(2)}</td>
-                            <td><pre>${JSON.stringify(ind.config, null, 2)}</pre></td>
-                        `;
-                        tableBody.appendChild(row);
+                .then(generations => {
+                    generations.forEach(gen => {
+                        const genId = gen.generation_index;
+
+                        const button = document.createElement('button');
+                        button.textContent = `Generation ${genId}`;
+                        button.className = 'collapsible';
+
+                        const content = document.createElement('div');
+                        content.className = 'content';
+                        content.id = `gen-${genId}`;
+
+                        generationsList.appendChild(button);
+                        generationsList.appendChild(content);
+
+                        button.addEventListener('click', function() {
+                            this.classList.toggle('active');
+                            const content = this.nextElementSibling;
+                            if (content.style.display === "block") {
+                                content.style.display = "none";
+                            } else {
+                                content.style.display = "block";
+                                if (!content.innerHTML) {
+                                    fetchGenerationData(genId, content);
+                                }
+                            }
+                        });
+
+                        if (requestedGenId && genId == requestedGenId) {
+                            button.click();
+                        }
                     });
                 });
+
+            function fetchGenerationData(genId, contentElement) {
+                fetch(`/api/generation/${genId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        const table = document.createElement('table');
+                        table.innerHTML = `
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>ELO</th>
+                                    <th>Configuration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            </tbody>
+                        `;
+                        const tableBody = table.querySelector('tbody');
+                        data.population.individuals.forEach(ind => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td><a href="individual.html?gen=${genId}&ind=${ind.id}">${ind.id}</a></td>
+                                <td>${ind.elo.toFixed(2)}</td>
+                                <td><pre>${JSON.stringify(ind.config, null, 2)}</pre></td>
+                            `;
+                            tableBody.appendChild(row);
+                        });
+                        contentElement.appendChild(table);
+                    });
+            }
         });
     </script>
 </body>
