@@ -72,53 +72,68 @@
             const stsScore = document.getElementById('sts-score');
             const stsElo = document.getElementById('sts-elo');
 
-            const setupSts = async () => {
-                // This is a temporary solution to get the config hash on page load.
-                // A better solution would be to have an endpoint that provides the hash directly.
-                const response = await fetch(`/api/individual/${genId}/${indId}`);
-                const data = await response.json();
-                const configStr = JSON.stringify(data.individual.config);
-                let hash = 0;
-                for (let i = 0; i < configStr.length; i++) {
-                    const char = configStr.charCodeAt(i);
-                    hash = ((hash << 5) - hash) + char;
-                    hash |= 0; // Convert to 32bit integer
-                }
-                configHash = hash;
-
-                // Check for existing results
-                const resultResponse = await fetch(`/api/sts/result/${configHash}`);
-                if (resultResponse.ok) {
-                    const result = await resultResponse.json();
-                    updateStsDisplay(result);
-                }
-
-
+            const connectWs = () => {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
                 ws.onopen = () => {
-                    ws.send(JSON.stringify({ subscribe: "Sts", config_hash: configHash }));
+                    console.log("WebSocket connection established.");
                 };
 
                 ws.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
+
+                    // When the backend confirms the test has started, it sends the hash.
+                    // We then subscribe to updates for that specific hash.
+                    if (msg.type === 'StsStarted') {
+                        configHash = msg.payload.config_hash;
+                        console.log(`STS test started with hash: ${configHash}. Subscribing to updates.`);
+                        ws.send(JSON.stringify({ subscribe: "Sts", config_hash: configHash }));
+
+                        // Check for existing results immediately after getting the hash
+                        fetch(`/api/sts/result/${configHash}`)
+                            .then(response => {
+                                if (response.ok) {
+                                    return response.json();
+                                }
+                            })
+                            .then(result => {
+                                if (result) {
+                                    updateStsDisplay(result);
+                                }
+                            });
+                    }
+
                     if (msg.type === 'Sts' && msg.payload.config_hash === configHash) {
                         updateStsDisplay(msg.payload);
                     }
+                };
+
+                 ws.onclose = () => {
+                    console.log("WebSocket connection closed. Attempting to reconnect in 1 second...");
+                    setTimeout(connectWs, 1000);
+                };
+
+                ws.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                    ws.close();
                 };
             };
 
             const updateStsDisplay = (result) => {
                 stsProgress.textContent = `${(result.progress * 100).toFixed(2)}%`;
                 stsScore.textContent = `${result.score} / ${result.total}`;
-                if (result.elo) {
-                    stsElo.textContent = result.elo.toFixed(2);
-                }
+                stsElo.textContent = result.elo ? result.elo.toFixed(2) : 'Calculating...';
             };
 
             runStsBtn.addEventListener('click', () => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Reset display on new run
+                    stsProgress.textContent = '0.00%';
+                    stsScore.textContent = '0 / 0';
+                    stsElo.textContent = 'Requesting...';
+
+                    console.log(`Requesting STS run for G${genId}, I${indId}`);
                     ws.send(JSON.stringify({
                         action: "run_sts",
                         gen_id: parseInt(genId),
@@ -126,10 +141,11 @@
                     }));
                 } else {
                     console.error("WebSocket is not connected.");
+                    alert("WebSocket is not connected. Please refresh the page.");
                 }
             });
 
-            setupSts();
+            connectWs();
         });
     </script>
 </body>
