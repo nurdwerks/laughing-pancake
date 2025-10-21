@@ -5,7 +5,6 @@
 # To stop the script, use Ctrl+C.
 while true; do
     git pull
-    cargo build --release
-    ./target/release/rust-chess-tui
+    cargo build --release && ./target/release/rust-chess-tui
     sleep 5
 done
