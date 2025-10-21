@@ -225,6 +225,7 @@ enum Subscription {
     State,
     Log,
     Sts(u64),
+    StsGlobal,
 }
 
 #[derive(Deserialize)]
@@ -289,10 +290,12 @@ impl Handler<Event> for MyWs {
                 }
             }
             Event::StsUpdate(update) => {
-                if self
+                let is_subscribed_specific = self
                     .subscriptions
-                    .contains(&Subscription::Sts(update.config_hash))
-                {
+                    .contains(&Subscription::Sts(update.config_hash));
+                let is_subscribed_global = self.subscriptions.contains(&Subscription::StsGlobal);
+
+                if is_subscribed_specific || is_subscribed_global {
                     Some(WsMessage::Sts(update))
                 } else {
                     None
@@ -328,6 +331,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                             "Sts" => {
                                 if let Some(hash) = req.config_hash {
                                     self.subscriptions.insert(Subscription::Sts(hash));
+                                } else {
+                                    self.subscriptions.insert(Subscription::StsGlobal);
                                 }
                             }
                             _ => (),
