@@ -104,6 +104,10 @@
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
+                ws.onopen = () => {
+                    ws.send(JSON.stringify({ subscribe: "Sts", config_hash: configHash }));
+                };
+
                 ws.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'Sts' && msg.payload.config_hash === configHash) {

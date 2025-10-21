@@ -7,7 +7,8 @@ use actix::{Actor, AsyncContext, Handler, StreamHandler};
 use actix_files as fs;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::Path;
 use std::{fs as std_fs, io};
 
@@ -208,8 +209,31 @@ async fn get_sts_result(path: web::Path<u64>) -> impl Responder {
 }
 
 
+#[derive(Debug, Eq, PartialEq, Hash)]
+enum Subscription {
+    State,
+    Log,
+    Sts(u64),
+}
+
+#[derive(Deserialize)]
+struct SubscriptionRequest {
+    subscribe: String,
+    config_hash: Option<u64>,
+}
+
 /// The WebSocket actor.
-struct MyWs;
+struct MyWs {
+    subscriptions: HashSet<Subscription>,
+}
+
+impl MyWs {
+    fn new() -> Self {
+        Self {
+            subscriptions: HashSet::new(),
+        }
+    }
+}
 
 impl Actor for MyWs {
     type Context = ws::WebsocketContext<Self>;
@@ -237,10 +261,31 @@ impl Handler<Event> for MyWs {
 
     fn handle(&mut self, msg: Event, ctx: &mut Self::Context) {
         let ws_msg = match msg {
-            Event::WebsocketStateUpdate(state) => WsMessage::State(state),
-            Event::LogUpdate(log) => WsMessage::Log(log),
-            Event::StsUpdate(update) => WsMessage::Sts(update),
-            _ => return, // Should not happen due to the filter in `started`
+            Event::WebsocketStateUpdate(state) => {
+                if self.subscriptions.contains(&Subscription::State) {
+                    WsMessage::State(state)
+                } else {
+                    return;
+                }
+            }
+            Event::LogUpdate(log) => {
+                if self.subscriptions.contains(&Subscription::Log) {
+                    WsMessage::Log(log)
+                } else {
+                    return;
+                }
+            }
+            Event::StsUpdate(update) => {
+                if self
+                    .subscriptions
+                    .contains(&Subscription::Sts(update.config_hash))
+                {
+                    WsMessage::Sts(update)
+                } else {
+                    return;
+                }
+            }
+            _ => return,
         };
 
         if let Ok(json) = serde_json::to_string(&ws_msg) {
@@ -255,12 +300,27 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
         match msg {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
-                let text = text.to_string();
-                if text == "request_quit" {
+                let text_str = text.to_string();
+                if let Ok(req) = serde_json::from_str::<SubscriptionRequest>(&text_str) {
+                    match req.subscribe.as_str() {
+                        "State" => {
+                            self.subscriptions.insert(Subscription::State);
+                        }
+                        "Log" => {
+                            self.subscriptions.insert(Subscription::Log);
+                        }
+                        "Sts" => {
+                            if let Some(hash) = req.config_hash {
+                                self.subscriptions.insert(Subscription::Sts(hash));
+                            }
+                        }
+                        _ => (),
+                    }
+                } else if text_str == "request_quit" {
                     EVENT_BROKER.publish(crate::event::Event::RequestQuit);
-                } else if text == "force_quit" {
+                } else if text_str == "force_quit" {
                     EVENT_BROKER.publish(crate::event::Event::ForceQuit);
-                } else if text == "reset_simulation" {
+                } else if text_str == "reset_simulation" {
                     EVENT_BROKER.publish(crate::event::Event::ResetSimulation);
                 }
             }
@@ -273,5 +333,5 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
 /// This is the handler for the WebSocket connection.
 /// It will be called whenever a new WebSocket connection is established.
 async fn ws_index(r: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    ws::start(MyWs, &r, stream)
+    ws::start(MyWs::new(), &r, stream)
 }

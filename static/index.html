@@ -53,6 +53,8 @@
 
             ws.onopen = () => {
                 console.log("WebSocket connection established.");
+                ws.send(JSON.stringify({ subscribe: "State" }));
+                ws.send(JSON.stringify({ subscribe: "Log" }));
             };
 
             ws.onmessage = (event) => {
