@@ -30,6 +30,11 @@ struct IndividualDetails {
     matches: Vec<Match>,
 }
 
+#[derive(Serialize)]
+struct StsRunResponse {
+    config_hash: u64,
+}
+
 /// The main entry point for the web server.
 pub async fn start_server() -> std::io::Result<()> {
     HttpServer::new(|| {
@@ -178,10 +183,12 @@ async fn run_sts_test(path: web::Path<(u32, u32)>) -> impl Responder {
         .find(|i| i.id == ind_id as usize)
     {
         let mut runner = StsRunner::new(individual.config.clone());
+        let config_hash = runner.config_hash();
         tokio::spawn(async move {
             runner.run().await;
         });
-        HttpResponse::Ok().body("STS test started")
+
+        HttpResponse::Ok().json(StsRunResponse { config_hash })
     } else {
         HttpResponse::NotFound().body(format!("Individual {} not found", ind_id))
     }
