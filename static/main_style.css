@@ -139,20 +139,42 @@ h2 {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
-table {
+.data-table {
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     margin-top: 20px;
-}
-
-th, td {
-    padding: 10px;
     border: 1px solid #6272a4;
-    text-align: left;
+    border-radius: 8px;
+    overflow: hidden;
 }
 
-th {
+.data-table tbody tr:hover {
     background-color: #44475a;
+}
+
+.data-table th, .data-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #44475a;
+}
+
+.data-table td {
+    border-right: 1px solid #44475a;
+}
+
+.data-table td:last-child {
+    border-right: none;
+}
+
+.data-table th {
+    background-color: #44475a;
+    font-weight: bold;
+    border-right: 1px solid #6272a4;
+}
+
+.data-table th:last-child {
+    border-right: none;
 }
 
 pre {
@@ -198,4 +220,10 @@ button:hover {
 .button-link:hover {
     background-color: #7c8dbf;
     text-decoration: none;
+}
+
+.link-container {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 20px;
 }
