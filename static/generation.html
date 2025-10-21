@@ -37,6 +37,9 @@
         <div id="generations-list">
             <!-- Generations will be loaded here -->
         </div>
+        <div class="link-container">
+            <a href="history.html" class="button-link">View History</a>
+        </div>
     </div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -85,6 +88,7 @@
                     .then(response => response.json())
                     .then(data => {
                         const table = document.createElement('table');
+                    table.className = 'data-table';
                         table.innerHTML = `
                             <thead>
                                 <tr>
