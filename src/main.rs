@@ -10,6 +10,16 @@ mod constants;
 mod sts;
 
 use clap::Parser;
+use crate::app::App;
+use crossterm::event::DisableMouseCapture;
+use crossterm::execute;
+use crossterm::terminal::{disable_raw_mode, LeaveAlternateScreen};
+use ratatui::prelude::CrosstermBackend;
+use ratatui::Terminal;
+use std::error::Error;
+use std::panic;
+use std::process;
+use std::thread;
 
 
 #[derive(Parser, Debug)]
