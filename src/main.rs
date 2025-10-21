@@ -25,7 +25,7 @@ struct Args {
 
     /// Enable the Text-based User Interface (TUI)
     #[arg(long)]
-    enable_tui: bool,
+    tui: bool,
 }
 
 #[cfg(not(test))]
@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut app = App::new(git_hash);
 
-    if args.enable_tui {
+    if args.tui {
         // TUI mode
         let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
         let res = app.run_tui(&mut terminal).await;
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     } else {
         // Headless mode
-        println!("Running in headless mode. Use --enable-tui to show the interface.");
+        println!("Running in headless mode. Use --tui to show the interface.");
         let res = app.run_headless().await;
         if let Err(err) = res {
             eprintln!("Headless mode error: {err:?}");
