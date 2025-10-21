@@ -78,17 +78,21 @@
 
                 ws.onopen = () => {
                     console.log("WebSocket connection established.");
+                    // Subscribe to STS updates for this specific individual
+                    ws.send(JSON.stringify({
+                        subscribe: "StsIndividual",
+                        gen_id: parseInt(genId),
+                        ind_id: parseInt(indId)
+                    }));
                 };
 
                 ws.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
 
-                    // When the backend confirms the test has started, it sends the hash.
-                    // We then subscribe to updates for that specific hash.
+                    // When the backend confirms the test has started or a subscription is confirmed, it sends the hash.
                     if (msg.type === 'StsStarted') {
                         configHash = msg.payload.config_hash;
-                        console.log(`STS test started with hash: ${configHash}. Subscribing to updates.`);
-                        ws.send(JSON.stringify({ subscribe: "Sts", config_hash: configHash }));
+                        console.log(`Now listening for STS updates for hash: ${configHash}.`);
 
                         // Check for existing results immediately after getting the hash
                         fetch(`/api/sts/result/${configHash}`)

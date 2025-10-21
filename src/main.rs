@@ -5,7 +5,7 @@ mod ui;
 mod game;
 mod ga;
 mod event;
-mod server;
+pub mod server;
 mod constants;
 mod sts;
 

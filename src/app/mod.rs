@@ -279,7 +279,7 @@ impl App {
                     }
                     self.should_quit = true;
                 }
-                Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_) => {
+                Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_) | Event::StsStarted(_) => {
                     // Ignore, this event is for the web client
                 }
             }
