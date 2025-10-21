@@ -3,17 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STS ELO Estimation</title>
+    <title>STS Status</title>
     <link rel="stylesheet" href="main_style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>STS ELO Estimation</h1>
-        <div id="sts-container">
-            <!-- STS logic will be primarily handled in individual.html for now -->
-            <p>This page is a placeholder for a more centralized STS dashboard.</p>
-            <p>To run an STS test, please navigate to an individual's detail page.</p>
+    <div class="main-container">
+        <h1>STS Status</h1>
+        <div id="sts-container" class="scroll-content">
+            <!-- STS status updates will be dynamically inserted here -->
         </div>
     </div>
+    <div class="link-container">
+        <a href="index.html" class="button-link">Home</a>
+        <a href="history.html" class="button-link">History</a>
+    </div>
+
+    <script>
+        let ws;
+        let stsRuns = {};
+
+        function connect() {
+            console.log("Attempting to connect to WebSocket...");
+            ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log("WebSocket connection established.");
+                ws.send(JSON.stringify({ subscribe: "Sts" }));
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+
+                if (msg.type === 'Sts') {
+                    const update = msg.payload;
+                    stsRuns[update.config_hash] = update;
+                    renderStsRuns();
+                }
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket connection closed. Attempting to reconnect in 1 second...");
+                setTimeout(connect, 1000);
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+                ws.close();
+            };
+        }
+
+        function renderStsRuns() {
+            const container = document.getElementById('sts-container');
+            container.innerHTML = '';
+
+            if (Object.keys(stsRuns).length === 0) {
+                container.innerHTML = '<p>No active STS runs.</p>';
+                return;
+            }
+
+            const sortedHashes = Object.keys(stsRuns).sort((a, b) => a - b);
+
+            for (const hash of sortedHashes) {
+                const run = stsRuns[hash];
+                const runDiv = document.createElement('div');
+                runDiv.className = 'sts-run-item';
+
+                const progressText = (run.progress * 100).toFixed(2);
+                const eloText = run.elo ? run.elo.toFixed(2) : 'Calculating...';
+
+                runDiv.innerHTML = `
+                    <h3>Test: ${hash}</h3>
+                    <p>Progress: ${run.score} / ${run.total}</p>
+                    <progress value="${run.progress}" max="1"></progress>
+                    <span>${progressText}%</span>
+                    <p>Estimated ELO: ${eloText}</p>
+                `;
+                container.appendChild(runDiv);
+            }
+        }
+
+        connect();
+        renderStsRuns(); // Initial render
+    </script>
 </body>
 </html>
