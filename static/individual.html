@@ -79,24 +79,19 @@
             const stsScore = document.getElementById('sts-score');
             const stsElo = document.getElementById('sts-elo');
 
-            // Function to get config hash (placeholder)
-            const getConfigHash = async () => {
+            const setupSts = async () => {
+                // This is a temporary solution to get the config hash on page load.
+                // A better solution would be to have an endpoint that provides the hash directly.
                 const response = await fetch(`/api/individual/${genId}/${indId}`);
                 const data = await response.json();
                 const configStr = JSON.stringify(data.individual.config);
-
-                // This is a simple Javascript implementation of the same hasher used in the backend.
                 let hash = 0;
                 for (let i = 0; i < configStr.length; i++) {
                     const char = configStr.charCodeAt(i);
                     hash = ((hash << 5) - hash) + char;
                     hash |= 0; // Convert to 32bit integer
                 }
-                return hash;
-            };
-
-            const setupSts = async () => {
-                configHash = await getConfigHash();
+                configHash = hash;
 
                 // Check for existing results
                 const resultResponse = await fetch(`/api/sts/result/${configHash}`);
@@ -105,7 +100,7 @@
                     updateStsDisplay(result);
                 }
 
-                // Setup WebSocket
+
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
@@ -126,7 +121,24 @@
             };
 
             runStsBtn.addEventListener('click', () => {
-                fetch(`/api/sts/run/${genId}/${indId}`, { method: 'POST' });
+                fetch(`/api/sts/run/${genId}/${indId}`, { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        configHash = data.config_hash;
+                        // Check for existing results
+                        return fetch(`/api/sts/result/${configHash}`);
+                    })
+                    .then(response => {
+                        if (response.ok) {
+                            return response.json();
+                        }
+                        return null;
+                    })
+                    .then(result => {
+                        if (result) {
+                            updateStsDisplay(result);
+                        }
+                    });
             });
 
             setupSts();

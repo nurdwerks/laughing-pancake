@@ -50,6 +50,10 @@ impl StsRunner {
         }
     }
 
+    pub fn config_hash(&self) -> u64 {
+        self.config_hash
+    }
+
     pub async fn run(&mut self) {
         let sts_dir = Path::new("sts");
         let results_dir = Path::new("sts_results");
