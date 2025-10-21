@@ -39,7 +39,6 @@ use sysinfo::{Components};
 
 pub struct App {
     should_quit: bool,
-    pub graceful_quit: bool,
     pub error_message: Option<String>,
     // System info
     pub system: System,
@@ -72,7 +71,6 @@ impl App {
 
         Self {
             should_quit: false,
-            graceful_quit: false,
             error_message: None,
             // System info
             system,
@@ -107,10 +105,6 @@ impl App {
             terminal.draw(|f| ui::draw(f, self))?;
             self.handle_tui_events().await?;
             self.handle_app_events().await?;
-
-            if self.graceful_quit && self.active_matches.is_empty() {
-                self.should_quit = true;
-            }
         }
 
         if let Some(handle) = self.evolution_thread_handle.take() {
@@ -126,10 +120,6 @@ impl App {
             self.update_system_stats();
             self.publish_ws_state_update();
             self.handle_app_events().await?;
-
-            if self.graceful_quit && self.active_matches.is_empty() {
-                self.should_quit = true;
-            }
 
             // In headless mode, we can sleep for a bit to avoid busy-waiting
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -260,14 +250,8 @@ impl App {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
                     self.should_quit = true;
                 }
-                Event::RequestQuit => {
-                    *self.evolution_should_quit.lock().unwrap() = true;
-                    self.graceful_quit = true;
-                    EVENT_BROKER.publish(Event::StatusUpdate("Graceful shutdown initiated. Waiting for current matches to complete...".to_string()));
-                }
                 Event::ForceQuit => {
-                    *self.evolution_should_quit.lock().unwrap() = true;
-                    self.should_quit = true;
+                    std::process::exit(0);
                 }
                 Event::ResetSimulation => {
                     *self.evolution_should_quit.lock().unwrap() = true;
@@ -321,7 +305,6 @@ impl App {
         let workers = self.evolution_workers.lock().unwrap();
         WebsocketState {
             git_hash: self.git_hash.clone(),
-            graceful_shutdown: self.graceful_quit,
             cpu_usage: self.cpu_usage,
             memory_usage: self.memory_usage,
             total_memory: self.total_memory,

@@ -34,7 +34,6 @@
     <div id="buttons">
         <a href="history.html" class="button-link">View History</a>
         <a href="sts.html" class="button-link">STS Dashboard</a>
-        <button id="request_quit">Request Quit</button>
         <button id="force_quit">Force Quit</button>
         <button id="reset_simulation">Reset Simulation</button>
     </div>
@@ -86,7 +85,6 @@
                 ws.close();
             };
 
-            document.getElementById('request_quit').onclick = () => ws.send('request_quit');
             document.getElementById('force_quit').onclick = () => ws.send('force_quit');
             document.getElementById('reset_simulation').onclick = () => {
                 if (confirm('Are you sure you want to reset the simulation? This will delete all progress.')) {

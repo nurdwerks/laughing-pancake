@@ -113,17 +113,13 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Generation Status
     let progress = app.evolution_matches_completed as f64 / app.evolution_total_matches.max(1) as f64;
-    let progress_title = if app.graceful_quit {
-        "Graceful shutdown...".to_string()
-    } else {
-        format!(
-            "G: {} | R: {} | M: {}/{}",
-            app.evolution_current_generation,
-            app.evolution_current_round,
-            app.evolution_matches_completed,
-            app.evolution_total_matches
-        )
-    };
+    let progress_title = format!(
+        "G: {} | R: {} | M: {}/{}",
+        app.evolution_current_generation,
+        app.evolution_current_round,
+        app.evolution_matches_completed,
+        app.evolution_total_matches
+    );
     let progress_bar = Gauge::default()
         .block(Block::default().borders(Borders::ALL).title(progress_title))
         .gauge_style(Style::default().fg(Color::Green))

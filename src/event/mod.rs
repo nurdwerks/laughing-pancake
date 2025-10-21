@@ -19,7 +19,6 @@ use crate::server::StsRunResponse;
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
     pub git_hash: String,
-    pub graceful_shutdown: bool,
     // System info
     pub cpu_usage: f32,
     pub memory_usage: u64,
@@ -109,7 +108,6 @@ pub enum Event {
     StatusUpdate(String),
     LogUpdate(String),
     Panic(String),
-    RequestQuit,
     ForceQuit,
     ResetSimulation,
 }

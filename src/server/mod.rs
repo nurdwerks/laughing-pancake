@@ -425,8 +425,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                             }
                         }
                     }
-                } else if text_str == "request_quit" {
-                    EVENT_BROKER.publish(crate::event::Event::RequestQuit);
                 } else if text_str == "force_quit" {
                     EVENT_BROKER.publish(crate::event::Event::ForceQuit);
                 } else if text_str == "reset_simulation" {
