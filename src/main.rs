@@ -16,6 +16,7 @@ mod ga;
 mod event;
 mod server;
 mod constants;
+mod sts;
 
 use clap::Parser;
 

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generation Details</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 id="generation-title"></h1>
+        <h2>Individuals</h2>
+        <table id="individuals-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>ELO</th>
+                    <th>Configuration</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Data will be inserted here by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const genId = params.get('gen');
+
+            document.getElementById('generation-title').textContent = `Generation ${genId}`;
+
+            fetch(`/api/generation/${genId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.querySelector('#individuals-table tbody');
+                    data.population.individuals.forEach(ind => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><a href="individual.html?gen=${genId}&ind=${ind.id}">${ind.id}</a></td>
+                            <td>${ind.elo.toFixed(2)}</td>
+                            <td><pre>${JSON.stringify(ind.config, null, 2)}</pre></td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Individual Details</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 id="individual-title"></h1>
+        <h2>Configuration</h2>
+        <pre id="config-display"></pre>
+
+        <h2>STS ELO Estimation</h2>
+        <button id="run-sts-btn">Run STS Test</button>
+        <div id="sts-results">
+            <p>Progress: <span id="sts-progress">N/A</span></p>
+            <p>Score: <span id="sts-score">N/A</span></p>
+            <p>ELO: <span id="sts-elo">N/A</span></p>
+        </div>
+
+        <h2>Matches</h2>
+        <table id="matches-table">
+            <thead>
+                <tr>
+                    <th>Round</th>
+                    <th>White</th>
+                    <th>Black</th>
+                    <th>Result</th>
+                    <th>PGN</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Data will be inserted here by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const genId = params.get('gen');
+            const indId = params.get('ind');
+
+            document.getElementById('individual-title').textContent = `Individual ${indId} (Generation ${genId})`;
+
+            let configHash = null;
+
+            // Fetch individual details
+            fetch(`/api/individual/${genId}/${indId}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('config-display').textContent = JSON.stringify(data.individual.config, null, 2);
+
+                    // Calculate config hash
+                    const configStr = JSON.stringify(data.individual.config);
+
+                    // A simple hash function, not crypthographic but good enough for this purpose.
+                    // This is a placeholder and should be replaced with a proper hash function if needed.
+                    // For now, we will fetch the hash from the backend.
+
+                    const matchesTableBody = document.querySelector('#matches-table tbody');
+                    data.matches.forEach(match => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${match.round}</td>
+                            <td>${match.white_player_name}</td>
+                            <td>${match.black_player_name}</td>
+                            <td>${match.result}</td>
+                            <td>${match.san}</td>
+                        `;
+                        matchesTableBody.appendChild(row);
+                    });
+                });
+
+            // STS Logic
+            const runStsBtn = document.getElementById('run-sts-btn');
+            const stsProgress = document.getElementById('sts-progress');
+            const stsScore = document.getElementById('sts-score');
+            const stsElo = document.getElementById('sts-elo');
+
+            // Function to get config hash (placeholder)
+            const getConfigHash = async () => {
+                const response = await fetch(`/api/individual/${genId}/${indId}`);
+                const data = await response.json();
+                const configStr = JSON.stringify(data.individual.config);
+
+                // This is a simple Javascript implementation of the same hasher used in the backend.
+                let hash = 0;
+                for (let i = 0; i < configStr.length; i++) {
+                    const char = configStr.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash |= 0; // Convert to 32bit integer
+                }
+                return hash;
+            };
+
+            const setupSts = async () => {
+                configHash = await getConfigHash();
+
+                // Check for existing results
+                const resultResponse = await fetch(`/api/sts/result/${configHash}`);
+                if (resultResponse.ok) {
+                    const result = await resultResponse.json();
+                    updateStsDisplay(result);
+                }
+
+                // Setup WebSocket
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+
+                ws.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'Sts' && msg.payload.config_hash === configHash) {
+                        updateStsDisplay(msg.payload);
+                    }
+                };
+            };
+
+            const updateStsDisplay = (result) => {
+                stsProgress.textContent = `${(result.progress * 100).toFixed(2)}%`;
+                stsScore.textContent = `${result.score} / ${result.total}`;
+                if (result.elo) {
+                    stsElo.textContent = result.elo.toFixed(2);
+                }
+            };
+
+            runStsBtn.addEventListener('click', () => {
+                fetch(`/api/sts/run/${genId}/${indId}`, { method: 'POST' });
+            });
+
+            setupSts();
+        });
+    </script>
+</body>
+</html>
