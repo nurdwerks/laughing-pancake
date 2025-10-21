@@ -68,7 +68,7 @@ async fn get_generations() -> impl Responder {
 
 async fn get_generation_details(path: web::Path<u32>) -> impl Responder {
     let gen_id = path.into_inner();
-    let file_path = Path::new("evolution").join(format!("generation_{}.json", gen_id));
+    let file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
 
     match std_fs::read_to_string(file_path) {
         Ok(json_content) => match serde_json::from_str::<Generation>(&json_content) {
@@ -78,15 +78,15 @@ async fn get_generation_details(path: web::Path<u32>) -> impl Responder {
                 });
                 HttpResponse::Ok().json(gen)
             }
-            Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {}", e)),
+            Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {e}")),
         },
-        Err(e) => HttpResponse::NotFound().body(format!("Could not read generation file: {}", e)),
+        Err(e) => HttpResponse::NotFound().body(format!("Could not read generation file: {e}")),
     }
 }
 
 async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
     let (gen_id, ind_id) = path.into_inner();
-    let file_path = Path::new("evolution").join(format!("generation_{}.json", gen_id));
+    let file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
 
     match std_fs::read_to_string(file_path) {
         Ok(json_content) => match serde_json::from_str::<Generation>(&json_content) {
@@ -98,7 +98,7 @@ async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
                     .find(|i| i.id == ind_id as usize)
                     .cloned()
                 {
-                    let individual_name = format!("individual_{}.json", ind_id);
+                    let individual_name = format!("individual_{ind_id}.json");
                     let matches = gen
                         .matches
                         .into_iter()
@@ -111,14 +111,13 @@ async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
                     HttpResponse::Ok().json(IndividualDetails { individual, matches })
                 } else {
                     HttpResponse::NotFound().body(format!(
-                        "Individual {} not found in generation {}",
-                        ind_id, gen_id
+                        "Individual {ind_id} not found in generation {gen_id}"
                     ))
                 }
             }
-            Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {}", e)),
+            Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {e}")),
         },
-        Err(e) => HttpResponse::NotFound().body(format!("Could not read generation file: {}", e)),
+        Err(e) => HttpResponse::NotFound().body(format!("Could not read generation file: {e}")),
     }
 }
 
@@ -172,12 +171,12 @@ async fn run_sts_test(path: web::Path<(u32, u32)>) -> impl Responder {
 }
 
 async fn run_sts_test_logic(gen_id: u32, ind_id: u32) -> Result<u64, HttpResponse> {
-    let gen_file_path = Path::new("evolution").join(format!("generation_{}.json", gen_id));
+    let gen_file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
 
     let json_content = match std_fs::read_to_string(gen_file_path) {
         Ok(content) => content,
         Err(e) => {
-            return Err(HttpResponse::NotFound().body(format!("Could not read generation file: {}", e)))
+            return Err(HttpResponse::NotFound().body(format!("Could not read generation file: {e}")))
         }
     };
 
@@ -185,7 +184,7 @@ async fn run_sts_test_logic(gen_id: u32, ind_id: u32) -> Result<u64, HttpRespons
         Ok(g) => g,
         Err(e) => {
             return Err(HttpResponse::InternalServerError()
-                .body(format!("Deserialization error: {}", e)))
+                .body(format!("Deserialization error: {e}")))
         }
     };
 
@@ -203,13 +202,13 @@ async fn run_sts_test_logic(gen_id: u32, ind_id: u32) -> Result<u64, HttpRespons
 
         Ok(config_hash)
     } else {
-        Err(HttpResponse::NotFound().body(format!("Individual {} not found", ind_id)))
+        Err(HttpResponse::NotFound().body(format!("Individual {ind_id} not found")))
     }
 }
 
 async fn get_sts_result(path: web::Path<u64>) -> impl Responder {
     let config_hash = path.into_inner();
-    let result_path = Path::new("sts_results").join(format!("{}.json", config_hash));
+    let result_path = Path::new("sts_results").join(format!("{config_hash}.json"));
 
     match std_fs::read_to_string(result_path) {
         Ok(json) => match serde_json::from_str::<StsResult>(&json) {
@@ -259,18 +258,17 @@ impl Actor for MyWs {
 
         actix_rt::spawn(async move {
             while let Ok(event) = rx.recv().await {
-                match event {
-                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_) => {
-                        addr.do_send(event);
-                    }
-                    _ => {} // Ignore other events
+                if matches!(
+                    event,
+                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_)
+                ) {
+                    addr.do_send(event);
                 }
             }
         });
     }
 }
 
-/// Handler for `Event` messages.
 impl Handler<Event> for MyWs {
     type Result = ();
 
@@ -278,16 +276,16 @@ impl Handler<Event> for MyWs {
         let ws_msg = match msg {
             Event::WebsocketStateUpdate(state) => {
                 if self.subscriptions.contains(&Subscription::State) {
-                    WsMessage::State(state)
+                    Some(WsMessage::State(state))
                 } else {
-                    return;
+                    None
                 }
             }
             Event::LogUpdate(log) => {
                 if self.subscriptions.contains(&Subscription::Log) {
-                    WsMessage::Log(log)
+                    Some(WsMessage::Log(log))
                 } else {
-                    return;
+                    None
                 }
             }
             Event::StsUpdate(update) => {
@@ -295,16 +293,18 @@ impl Handler<Event> for MyWs {
                     .subscriptions
                     .contains(&Subscription::Sts(update.config_hash))
                 {
-                    WsMessage::Sts(update)
+                    Some(WsMessage::Sts(update))
                 } else {
-                    return;
+                    None
                 }
             }
-            _ => return,
+            _ => None,
         };
 
-        if let Ok(json) = serde_json::to_string(&ws_msg) {
-            ctx.text(json);
+        if let Some(ws_msg) = ws_msg {
+            if let Ok(json) = serde_json::to_string(&ws_msg) {
+                ctx.text(json);
+            }
         }
     }
 }
@@ -335,15 +335,12 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                     }
 
                     if let Some(action) = req.action {
-                        match action.as_str() {
-                            "run_sts" => {
-                                if let (Some(gen_id), Some(ind_id)) = (req.gen_id, req.ind_id) {
-                                    tokio::spawn(async move {
-                                        let _ = run_sts_test_logic(gen_id, ind_id).await;
-                                    });
-                                }
+                        if action.as_str() == "run_sts" {
+                            if let (Some(gen_id), Some(ind_id)) = (req.gen_id, req.ind_id) {
+                                tokio::spawn(async move {
+                                    let _ = run_sts_test_logic(gen_id, ind_id).await;
+                                });
                             }
-                            _ => (),
                         }
                     }
                 } else if text_str == "request_quit" {

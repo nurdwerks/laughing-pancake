@@ -91,7 +91,7 @@ impl StsRunner {
         let epd_files = match get_epd_files(sts_dir) {
             Ok(files) => files,
             Err(e) => {
-                eprintln!("Error getting EPD files: {}", e);
+                eprintln!("Error getting EPD files: {e}");
                 return;
             }
         };
@@ -100,7 +100,7 @@ impl StsRunner {
         for file in epd_files {
             match parse_epd(&file) {
                 Ok(positions) => all_positions.extend(positions),
-                Err(e) => eprintln!("Error parsing EPD file {:?}: {}", file, e),
+                Err(e) => eprintln!("Error parsing EPD file {file:?}: {e}"),
             }
         }
         self.result.total_positions = all_positions.len();
@@ -162,11 +162,11 @@ impl StsRunner {
             });
 
             if let Err(e) = inner_task.await {
-                eprintln!("STS task panicked: {:?}", e);
+                eprintln!("STS task panicked: {e:?}");
             }
 
             RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
-            println!("Released STS lock for config hash: {}", config_hash);
+            println!("Released STS lock for config hash: {config_hash}");
         });
     }
 }
@@ -188,7 +188,7 @@ fn get_epd_files(dir: &Path) -> io::Result<Vec<PathBuf>> {
 
 fn parse_epd(file_path: &Path) -> Result<Vec<(Chess, String)>, String> {
     let content = fs::read_to_string(file_path)
-        .map_err(|e| format!("Failed to read EPD file: {}", e))?;
+        .map_err(|e| format!("Failed to read EPD file: {e}"))?;
 
     let mut positions = Vec::new();
     for line in content.lines() {
@@ -204,8 +204,8 @@ fn parse_epd(file_path: &Path) -> Result<Vec<(Chess, String)>, String> {
         let fen_str = parts[0];
         let best_move_str = parts[1].split(';').next().unwrap_or("").trim();
 
-        let fen: shakmaty::fen::Fen = fen_str.parse().map_err(|e| format!("Failed to parse EPD line: {}", e))?;
-        let pos: Chess = fen.into_position(shakmaty::CastlingMode::Standard).map_err(|e| format!("Failed to setup position: {}", e))?;
+        let fen: shakmaty::fen::Fen = fen_str.parse().map_err(|e| format!("Failed to parse EPD line: {e}"))?;
+        let pos: Chess = fen.into_position(shakmaty::CastlingMode::Standard).map_err(|e| format!("Failed to setup position: {e}"))?;
         positions.push((pos, best_move_str.to_string()));
     }
 

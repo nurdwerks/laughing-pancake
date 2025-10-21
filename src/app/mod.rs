@@ -99,24 +99,46 @@ impl App {
         }
     }
 
-    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+    pub async fn run_tui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         self.start_evolution();
         while !self.should_quit {
             self.update_system_stats();
             self.publish_ws_state_update();
             terminal.draw(|f| ui::draw(f, self))?;
-            self.handle_events().await?;
+            self.handle_tui_events().await?;
+            self.handle_app_events().await?;
 
             if self.graceful_quit && self.active_matches.is_empty() {
-                // The graceful quit flag is set, and no matches are running.
-                // Now we can signal the main loop to quit and wait for the thread to save.
                 self.should_quit = true;
-                if let Some(handle) = self.evolution_thread_handle.take() {
-                    // Wait for the evolution thread to finish, which includes saving the final state.
-                    handle.join().unwrap();
-                }
             }
         }
+
+        if let Some(handle) = self.evolution_thread_handle.take() {
+            handle.join().unwrap();
+        }
+
+        Ok(())
+    }
+
+    pub async fn run_headless(&mut self) -> io::Result<()> {
+        self.start_evolution();
+        while !self.should_quit {
+            self.update_system_stats();
+            self.publish_ws_state_update();
+            self.handle_app_events().await?;
+
+            if self.graceful_quit && self.active_matches.is_empty() {
+                self.should_quit = true;
+            }
+
+            // In headless mode, we can sleep for a bit to avoid busy-waiting
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        if let Some(handle) = self.evolution_thread_handle.take() {
+            handle.join().unwrap();
+        }
+
         Ok(())
     }
 
@@ -140,8 +162,7 @@ impl App {
         self.last_ws_update = Instant::now();
     }
 
-    async fn handle_events(&mut self) -> io::Result<()> {
-        // Handle keyboard events
+    async fn handle_tui_events(&mut self) -> io::Result<()> {
         if event::poll(Duration::from_millis(50))? {
             if let crossterm::event::Event::Key(key) = event::read()? {
                 if key.kind == event::KeyEventKind::Press {
@@ -164,8 +185,10 @@ impl App {
                 }
             }
         }
+        Ok(())
+    }
 
-        // Handle evolution events
+    async fn handle_app_events(&mut self) -> io::Result<()> {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
                 Event::TournamentStart(round, total_matches, skipped_matches) => {
@@ -176,7 +199,7 @@ impl App {
                 }
                 Event::GenerationStarted(gen_index) => {
                     self.evolution_current_generation = gen_index;
-					self.evolution_current_round = 0;
+                    self.evolution_current_round = 0;
                     self.evolution_matches_completed = 0;
                     self.evolution_total_matches = 0;
                     self.active_matches.clear();
