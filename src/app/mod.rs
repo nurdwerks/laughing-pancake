@@ -261,7 +261,10 @@ impl App {
                     if let Err(e) = std::fs::remove_dir_all("evolution") {
                         self.error_message = Some(format!("Failed to delete evolution directory: {e}"));
                     }
-                    self.should_quit = true;
+                    if let Err(e) = std::fs::remove_dir_all("sts_results") {
+                        self.error_message = Some(format!("Failed to delete sts_results directory: {e}"));
+                    }
+                    std::process::exit(0);
                 }
                 Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_) | Event::StsStarted(_) => {
                     // Ignore, this event is for the web client
