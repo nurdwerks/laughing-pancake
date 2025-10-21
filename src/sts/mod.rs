@@ -3,14 +3,19 @@
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
 use crate::game::search::evaluation_cache::EvaluationCache;
 use crate::game::search::{SearchConfig, PvsSearcher, Searcher};
+use lazy_static::lazy_static;
 use shakmaty::{san::San, Chess};
-use std::collections::hash_map::DefaultHasher;
-use std::sync::{Arc, Mutex};
+use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::hash::{Hash, Hasher};
-use std::{fs, io};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::{fs, io};
 use serde::{Deserialize, Serialize};
 use tokio::task;
+
+lazy_static! {
+    static ref RUNNING_STS_TESTS: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StsResult {
@@ -55,6 +60,18 @@ impl StsRunner {
     }
 
     pub async fn run(&mut self) {
+        {
+            let mut running_tests = RUNNING_STS_TESTS.lock().unwrap();
+            if running_tests.contains(&self.config_hash) {
+                println!(
+                    "STS run for config hash {} is already in progress.",
+                    self.config_hash
+                );
+                return;
+            }
+            running_tests.insert(self.config_hash);
+        }
+
         let sts_dir = Path::new("sts");
         let results_dir = Path::new("sts_results");
         if !results_dir.exists() {
@@ -90,11 +107,14 @@ impl StsRunner {
 
         let config = self.config.clone();
         let mut result = self.result.clone();
+        let config_hash = self.config_hash;
 
         task::spawn(async move {
-            let mut searcher = PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
+            let inner_task = task::spawn(async move {
+                let mut searcher =
+                    PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
 
-            for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
+                for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
                 if i < result.completed_positions {
                     continue; // Skip already completed positions
                 }
@@ -139,6 +159,14 @@ impl StsRunner {
             fs::write(result_path, json).expect("Failed to save final STS result");
 
             println!("STS run completed for config hash: {}", result.config_hash);
+            });
+
+            if let Err(e) = inner_task.await {
+                eprintln!("STS task panicked: {:?}", e);
+            }
+
+            RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
+            println!("Released STS lock for config hash: {}", config_hash);
         });
     }
 }

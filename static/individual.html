@@ -45,20 +45,13 @@
             document.getElementById('individual-title').textContent = `Individual ${indId} (Generation ${genId})`;
 
             let configHash = null;
+            let ws; // WebSocket connection
 
             // Fetch individual details
             fetch(`/api/individual/${genId}/${indId}`)
                 .then(response => response.json())
                 .then(data => {
                     document.getElementById('config-display').textContent = JSON.stringify(data.individual.config, null, 2);
-
-                    // Calculate config hash
-                    const configStr = JSON.stringify(data.individual.config);
-
-                    // A simple hash function, not crypthographic but good enough for this purpose.
-                    // This is a placeholder and should be replaced with a proper hash function if needed.
-                    // For now, we will fetch the hash from the backend.
-
                     const matchesTableBody = document.querySelector('#matches-table tbody');
                     data.matches.forEach(match => {
                         const row = document.createElement('tr');
@@ -102,7 +95,7 @@
 
 
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+                ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
 
                 ws.onopen = () => {
                     ws.send(JSON.stringify({ subscribe: "Sts", config_hash: configHash }));
@@ -125,24 +118,15 @@
             };
 
             runStsBtn.addEventListener('click', () => {
-                fetch(`/api/sts/run/${genId}/${indId}`, { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        configHash = data.config_hash;
-                        // Check for existing results
-                        return fetch(`/api/sts/result/${configHash}`);
-                    })
-                    .then(response => {
-                        if (response.ok) {
-                            return response.json();
-                        }
-                        return null;
-                    })
-                    .then(result => {
-                        if (result) {
-                            updateStsDisplay(result);
-                        }
-                    });
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        action: "run_sts",
+                        gen_id: parseInt(genId),
+                        ind_id: parseInt(indId)
+                    }));
+                } else {
+                    console.error("WebSocket is not connected.");
+                }
             });
 
             setupSts();

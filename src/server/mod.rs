@@ -165,16 +165,28 @@ fn read_generations_summary() -> io::Result<Vec<GenerationSummary>> {
 
 async fn run_sts_test(path: web::Path<(u32, u32)>) -> impl Responder {
     let (gen_id, ind_id) = path.into_inner();
+    match run_sts_test_logic(gen_id, ind_id).await {
+        Ok(config_hash) => HttpResponse::Ok().json(StsRunResponse { config_hash }),
+        Err(response) => response,
+    }
+}
+
+async fn run_sts_test_logic(gen_id: u32, ind_id: u32) -> Result<u64, HttpResponse> {
     let gen_file_path = Path::new("evolution").join(format!("generation_{}.json", gen_id));
 
     let json_content = match std_fs::read_to_string(gen_file_path) {
         Ok(content) => content,
-        Err(e) => return HttpResponse::NotFound().body(format!("Could not read generation file: {}", e)),
+        Err(e) => {
+            return Err(HttpResponse::NotFound().body(format!("Could not read generation file: {}", e)))
+        }
     };
 
     let gen: Generation = match serde_json::from_str(&json_content) {
         Ok(g) => g,
-        Err(e) => return HttpResponse::InternalServerError().body(format!("Deserialization error: {}", e)),
+        Err(e) => {
+            return Err(HttpResponse::InternalServerError()
+                .body(format!("Deserialization error: {}", e)))
+        }
     };
 
     if let Some(individual) = gen
@@ -189,9 +201,9 @@ async fn run_sts_test(path: web::Path<(u32, u32)>) -> impl Responder {
             runner.run().await;
         });
 
-        HttpResponse::Ok().json(StsRunResponse { config_hash })
+        Ok(config_hash)
     } else {
-        HttpResponse::NotFound().body(format!("Individual {} not found", ind_id))
+        Err(HttpResponse::NotFound().body(format!("Individual {} not found", ind_id)))
     }
 }
 
@@ -217,9 +229,12 @@ enum Subscription {
 }
 
 #[derive(Deserialize)]
-struct SubscriptionRequest {
-    subscribe: String,
+struct WebSocketRequest {
+    subscribe: Option<String>,
+    action: Option<String>,
     config_hash: Option<u64>,
+    gen_id: Option<u32>,
+    ind_id: Option<u32>,
 }
 
 /// The WebSocket actor.
@@ -301,20 +316,35 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
             Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
             Ok(ws::Message::Text(text)) => {
                 let text_str = text.to_string();
-                if let Ok(req) = serde_json::from_str::<SubscriptionRequest>(&text_str) {
-                    match req.subscribe.as_str() {
-                        "State" => {
-                            self.subscriptions.insert(Subscription::State);
-                        }
-                        "Log" => {
-                            self.subscriptions.insert(Subscription::Log);
-                        }
-                        "Sts" => {
-                            if let Some(hash) = req.config_hash {
-                                self.subscriptions.insert(Subscription::Sts(hash));
+                if let Ok(req) = serde_json::from_str::<WebSocketRequest>(&text_str) {
+                    if let Some(sub_type) = req.subscribe {
+                        match sub_type.as_str() {
+                            "State" => {
+                                self.subscriptions.insert(Subscription::State);
                             }
+                            "Log" => {
+                                self.subscriptions.insert(Subscription::Log);
+                            }
+                            "Sts" => {
+                                if let Some(hash) = req.config_hash {
+                                    self.subscriptions.insert(Subscription::Sts(hash));
+                                }
+                            }
+                            _ => (),
                         }
-                        _ => (),
+                    }
+
+                    if let Some(action) = req.action {
+                        match action.as_str() {
+                            "run_sts" => {
+                                if let (Some(gen_id), Some(ind_id)) = (req.gen_id, req.ind_id) {
+                                    tokio::spawn(async move {
+                                        let _ = run_sts_test_logic(gen_id, ind_id).await;
+                                    });
+                                }
+                            }
+                            _ => (),
+                        }
                     }
                 } else if text_str == "request_quit" {
                     EVENT_BROKER.publish(crate::event::Event::RequestQuit);
