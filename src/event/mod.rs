@@ -13,6 +13,8 @@ pub struct ComponentState {
     pub temperature: f32,
 }
 
+use crate::server::StsRunResponse;
+
 // This struct contains the entire state of the application that the web UI needs to render.
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
@@ -58,6 +60,7 @@ pub enum WsMessage {
     State(WebsocketState),
     Log(String),
     Sts(StsUpdate),
+    StsStarted(StsRunResponse),
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +97,7 @@ pub struct StsUpdate {
 pub enum Event {
     WebsocketStateUpdate(WebsocketState),
     StsUpdate(StsUpdate),
+    StsStarted(StsRunResponse),
     // Events used by the TUI and backend logic
     TournamentStart(usize, usize, usize),
     GenerationStarted(u32),

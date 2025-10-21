@@ -3,7 +3,7 @@
 use crate::event::{Event, WsMessage, EVENT_BROKER};
 use crate::ga::{Generation, Individual, Match};
 use crate::sts::{StsResult, StsRunner};
-use actix::{Actor, AsyncContext, Handler, StreamHandler};
+use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, StreamHandler};
 use actix_files as fs;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
@@ -31,9 +31,9 @@ struct IndividualDetails {
     matches: Vec<Match>,
 }
 
-#[derive(Serialize)]
-struct StsRunResponse {
-    config_hash: u64,
+#[derive(Serialize, Clone, Debug)]
+pub struct StsRunResponse {
+    pub config_hash: u64,
 }
 
 /// The main entry point for the web server.
@@ -162,6 +162,18 @@ fn read_generations_summary() -> io::Result<Vec<GenerationSummary>> {
     Ok(summaries)
 }
 
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SubscribeToSts {
+    hash: u64,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SendToClient {
+    json_payload: String,
+}
+
 async fn run_sts_test(path: web::Path<(u32, u32)>) -> impl Responder {
     let (gen_id, ind_id) = path.into_inner();
     match run_sts_test_logic(gen_id, ind_id).await {
@@ -261,7 +273,10 @@ impl Actor for MyWs {
             while let Ok(event) = rx.recv().await {
                 if matches!(
                     event,
-                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_)
+                    Event::WebsocketStateUpdate(_)
+                        | Event::LogUpdate(_)
+                        | Event::StsUpdate(_)
+                        | Event::StsStarted(_)
                 ) {
                     addr.do_send(event);
                 }
@@ -301,6 +316,7 @@ impl Handler<Event> for MyWs {
                     None
                 }
             }
+            Event::StsStarted(res) => Some(WsMessage::StsStarted(res)),
             _ => None,
         };
 
@@ -312,7 +328,34 @@ impl Handler<Event> for MyWs {
     }
 }
 
+impl Handler<SubscribeToSts> for MyWs {
+    type Result = ();
+
+    fn handle(&mut self, msg: SubscribeToSts, _: &mut Self::Context) {
+        self.subscriptions.insert(Subscription::Sts(msg.hash));
+    }
+}
+
+impl Handler<SendToClient> for MyWs {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendToClient, ctx: &mut Self::Context) {
+        ctx.text(msg.json_payload);
+    }
+}
+
 /// Handler for WebSocket messages.
+async fn get_config_hash_for_individual(gen_id: u32, ind_id: u32) -> Option<u64> {
+    let gen_file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
+    let json_content = std_fs::read_to_string(gen_file_path).ok()?;
+    let gen: Generation = serde_json::from_str(&json_content).ok()?;
+    gen.population
+        .individuals
+        .iter()
+        .find(|i| i.id == ind_id as usize)
+        .map(|individual| StsRunner::new(individual.config.clone()).config_hash())
+}
+
 impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
     fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
         match msg {
@@ -335,6 +378,30 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                                     self.subscriptions.insert(Subscription::StsGlobal);
                                 }
                             }
+                            "StsIndividual" => {
+                                if let (Some(gen_id), Some(ind_id)) = (req.gen_id, req.ind_id) {
+                                    let addr = ctx.address();
+                                    tokio::spawn(async move {
+                                        if let Some(hash) =
+                                            get_config_hash_for_individual(gen_id, ind_id).await
+                                        {
+                                            // Subscribe the actor to STS updates for this hash
+                                            addr.do_send(SubscribeToSts { hash });
+
+                                            // Also, send a message back to *this specific client*
+                                            // to let it know which hash to listen for.
+                                            let response = WsMessage::StsStarted(StsRunResponse {
+                                                config_hash: hash,
+                                            });
+                                            if let Ok(json_payload) =
+                                                serde_json::to_string(&response)
+                                            {
+                                                addr.do_send(SendToClient { json_payload });
+                                            }
+                                        }
+                                    });
+                                }
+                            }
                             _ => (),
                         }
                     }
@@ -342,8 +409,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
                     if let Some(action) = req.action {
                         if action.as_str() == "run_sts" {
                             if let (Some(gen_id), Some(ind_id)) = (req.gen_id, req.ind_id) {
+                                let addr = ctx.address();
                                 tokio::spawn(async move {
-                                    let _ = run_sts_test_logic(gen_id, ind_id).await;
+                                    if let Ok(config_hash) = run_sts_test_logic(gen_id, ind_id).await {
+                                        let response = WsMessage::StsStarted(StsRunResponse {
+                                            config_hash,
+                                        });
+                                        if let Ok(json_payload) =
+                                            serde_json::to_string(&response)
+                                        {
+                                            addr.do_send(SendToClient { json_payload });
+                                        }
+                                    }
                                 });
                             }
                         }
