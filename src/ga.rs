@@ -860,7 +860,6 @@ fn calculate_material_difference(pos: &Chess) -> i32 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Individual {
     pub id: usize,
-    #[serde(flatten)]
     pub config: SearchConfig,
     pub elo: f64,
 }
