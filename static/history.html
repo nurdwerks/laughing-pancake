@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolution History</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Evolution History</h1>
+        <table id="generations-table">
+            <thead>
+                <tr>
+                    <th>Generation</th>
+                    <th>Individuals</th>
+                    <th>Matches</th>
+                    <th>White Wins</th>
+                    <th>Black Wins</th>
+                    <th>Draws</th>
+                    <th>Top ELO</th>
+                    <th>Avg ELO</th>
+                    <th>Lowest ELO</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Data will be inserted here by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            fetch('/api/generations')
+                .then(response => response.json())
+                .then(data => {
+                    const tableBody = document.querySelector('#generations-table tbody');
+                    data.forEach(gen => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
+                            <td>${gen.num_individuals}</td>
+                            <td>${gen.num_matches}</td>
+                            <td>${gen.white_wins}</td>
+                            <td>${gen.black_wins}</td>
+                            <td>${gen.draws}</td>
+                            <td>${gen.top_elo.toFixed(2)}</td>
+                            <td>${gen.average_elo.toFixed(2)}</td>
+                            <td>${gen.lowest_elo.toFixed(2)}</td>
+                        `;
+                        tableBody.appendChild(row);
+                    });
+                });
+        });
+    </script>
+</body>
+</html>

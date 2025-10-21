@@ -57,6 +57,7 @@ pub struct ActiveMatchState {
 pub enum WsMessage {
     State(WebsocketState),
     Log(String),
+    Sts(StsUpdate),
 }
 
 #[derive(Clone, Debug)]
@@ -78,12 +79,21 @@ pub struct GenerationStats {
     pub lowest_elo: f64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct StsUpdate {
+    pub config_hash: u64,
+    pub progress: f64,
+    pub score: usize,
+    pub total: usize,
+    pub elo: Option<f64>,
+}
 
 /// Defines all possible events that can occur in the application.
 #[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 pub enum Event {
     WebsocketStateUpdate(WebsocketState),
+    StsUpdate(StsUpdate),
     // Events used by the TUI and backend logic
     TournamentStart(usize, usize, usize),
     GenerationStarted(u32),
