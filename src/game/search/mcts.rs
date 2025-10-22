@@ -3,8 +3,6 @@
 use crate::game::evaluation;
 use crate::game::evaluation::see;
 use crate::game::search::{MoveTreeNode, SearchConfig, Searcher, MctsCache, MctsNodeData};
-use crossbeam_utils::thread;
-use num_cpus;
 use shakmaty::{Chess, Move, Position, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
@@ -60,91 +58,74 @@ impl MctsSearcher {
             );
         }
 
-        let root = Node::new(pos.clone(), None, Arc::clone(&self.mcts_cache));
-        let root_mutex = Arc::new(Mutex::new(root));
+        let mut root = Node::new(pos.clone(), None, Arc::clone(&self.mcts_cache));
 
-        let num_threads = num_cpus::get();
-        let simulations_per_thread = simulations / num_threads as u32;
+        for _ in 0..simulations {
+            let mut path_indices = Vec::new();
 
-        thread::scope(|s| {
-            for _ in 0..num_threads {
-                let root_clone = Arc::clone(&root_mutex);
-                let config_clone = config.clone();
-
-                s.spawn(move |_| {
-                    for _ in 0..simulations_per_thread {
-                        let mut root_guard = root_clone.lock().unwrap();
-                        let mut path_indices = Vec::new();
-
-                        // Selection
-                        let mut current_node = &*root_guard;
-                        while !current_node.is_leaf() {
-                             let best_child_idx = current_node
-                                .children
-                                .iter()
-                                .enumerate()
-                                .max_by(|(_, a), (_, b)| {
-                                    let a_ucb1 = a.ucb1(current_node.visits);
-                                    let b_ucb1 = b.ucb1(current_node.visits);
-                                    a_ucb1.partial_cmp(&b_ucb1).unwrap()
-                                })
-                                .map(|(i, _)| i)
-                                .unwrap();
-                            path_indices.push(best_child_idx);
-                            current_node = &current_node.children[best_child_idx];
-                        }
-
-                        // Expansion
-                        let mut leaf_node = &mut *root_guard;
-                        for &idx in &path_indices {
-                            leaf_node = &mut leaf_node.children[idx];
-                        }
-
-                        if leaf_node.visits > 0 {
-                            leaf_node.expand();
-                        }
-
-                        let mut node_to_sim = leaf_node;
-                        if !node_to_sim.children.is_empty() {
-                            let random_child_idx = rand::random::<usize>() % node_to_sim.children.len();
-                            path_indices.push(random_child_idx);
-                            node_to_sim = &mut node_to_sim.children[random_child_idx];
-                        }
-
-
-                        // Simulation
-                        let mut sim_pos = node_to_sim.pos.clone();
-                        let mut sim_depth = 0;
-                        while !sim_pos.is_game_over() && sim_depth < 10 {
-                            let moves = sim_pos.legal_moves();
-                            if moves.is_empty() { break; }
-                            if let Some(m) = moves.get(rand::random::<usize>() % moves.len()) {
-                                sim_pos.play_unchecked(*m);
-                            } else {
-                                break;
-                            }
-                            sim_depth += 1;
-                        }
-
-                        let eval_score = evaluation::evaluate(&sim_pos, &config_clone);
-                        let win_prob = 1.0 / (1.0 + (-(eval_score as f64) / 400.0).exp());
-
-                        // Backpropagation
-                        let mut node_to_update = &mut *root_guard;
-                        node_to_update.visits += 1;
-                        node_to_update.wins += win_prob;
-                        for &idx in &path_indices {
-                            node_to_update = &mut node_to_update.children[idx];
-                            node_to_update.visits += 1;
-                            node_to_update.wins += win_prob;
-                        }
-                    }
-                });
+            // Selection
+            let mut current_node = &root;
+            while !current_node.is_leaf() {
+                let best_child_idx = current_node
+                    .children
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| {
+                        let a_ucb1 = a.ucb1(current_node.visits);
+                        let b_ucb1 = b.ucb1(current_node.visits);
+                        a_ucb1.partial_cmp(&b_ucb1).unwrap()
+                    })
+                    .map(|(i, _)| i)
+                    .unwrap();
+                path_indices.push(best_child_idx);
+                current_node = &current_node.children[best_child_idx];
             }
-        })
-        .unwrap();
 
-        let root = Arc::try_unwrap(root_mutex).unwrap().into_inner().unwrap();
+            // Expansion
+            let mut leaf_node = &mut root;
+            for &idx in &path_indices {
+                leaf_node = &mut leaf_node.children[idx];
+            }
+
+            if leaf_node.visits > 0 {
+                leaf_node.expand();
+            }
+
+            let mut node_to_sim = leaf_node;
+            if !node_to_sim.children.is_empty() {
+                let random_child_idx = rand::random::<usize>() % node_to_sim.children.len();
+                path_indices.push(random_child_idx);
+                node_to_sim = &mut node_to_sim.children[random_child_idx];
+            }
+
+
+            // Simulation
+            let mut sim_pos = node_to_sim.pos.clone();
+            let mut sim_depth = 0;
+            while !sim_pos.is_game_over() && sim_depth < 10 {
+                let moves = sim_pos.legal_moves();
+                if moves.is_empty() { break; }
+                if let Some(m) = moves.get(rand::random::<usize>() % moves.len()) {
+                    sim_pos.play_unchecked(*m);
+                } else {
+                    break;
+                }
+                sim_depth += 1;
+            }
+
+            let eval_score = evaluation::evaluate(&sim_pos, &config);
+            let win_prob = 1.0 / (1.0 + (-(eval_score as f64) / 400.0).exp());
+
+            // Backpropagation
+            let mut node_to_update = &mut root;
+            node_to_update.visits += 1;
+            node_to_update.wins += win_prob;
+            for &idx in &path_indices {
+                node_to_update = &mut node_to_update.children[idx];
+                node_to_update.visits += 1;
+                node_to_update.wins += win_prob;
+            }
+        }
 
         let best_child = root
             .children
