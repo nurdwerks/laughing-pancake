@@ -36,6 +36,10 @@ progress {
     gap: 1em;
     flex-wrap: wrap; /* Allow panes to wrap to the next line */
 }
+#matches-container.sts-leaderboard-view {
+    align-content: flex-start;
+}
+
 .match-pane {
     display: flex;
     flex-direction: column;
@@ -138,6 +142,33 @@ h2 {
     background-color: #282a36;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.full-width-container {
+    width: 100%;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #282a36;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.individual-header, .individual-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr 4fr;
+    gap: 1em;
+    padding: 12px 15px;
+    border-bottom: 1px solid #44475a;
+    align-items: center;
+}
+
+.individual-header {
+    font-weight: bold;
+    background-color: #44475a;
+}
+
+.individual-row:hover {
+    background-color: #44475a;
 }
 
 .data-table {

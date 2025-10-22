@@ -263,8 +263,10 @@
             updateStatusBar(state);
             updateSystemStats(state);
             if (state.selection_algorithm === 'StsScore') {
+                document.getElementById('matches-container').classList.add('sts-leaderboard-view');
                 updateStsLeaderboard(state.sts_leaderboard);
             } else {
+                document.getElementById('matches-container').classList.remove('sts-leaderboard-view');
                 updateMatches(state.active_matches);
             }
             updateWorkers(state.worker_statuses);

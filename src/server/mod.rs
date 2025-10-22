@@ -1,7 +1,7 @@
 // src/server/mod.rs
 
-use crate::event::{Event, WebsocketState, WsMessage, EVENT_BROKER};
-use crate::ga::{Generation, Match};
+use crate::event::{Event, SelectionAlgorithm, WebsocketState, WsMessage, EVENT_BROKER};
+use crate::ga::{Generation, GenerationConfig, Match};
 use crate::game::search::SearchConfig;
 use crate::sts::{StsResult, StsRunner};
 use actix::{Actor, AsyncContext, Handler, Message, StreamHandler};
@@ -24,6 +24,7 @@ struct GenerationSummary {
     top_elo: f64,
     average_elo: f64,
     lowest_elo: f64,
+    selection_algorithm: SelectionAlgorithm,
 }
 
 #[derive(Serialize)]
@@ -149,35 +150,46 @@ fn read_generations_summary() -> io::Result<Vec<GenerationSummary>> {
         return Ok(summaries);
     }
 
-    for entry in std_fs::read_dir(evolution_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && path.to_string_lossy().contains("generation_") {
-            if let Ok(json_content) = std_fs::read_to_string(&path) {
-                if let Ok(gen) = serde_json::from_str::<Generation>(&json_content) {
-                    let white_wins = gen.matches.iter().filter(|m| m.result == "1-0").count();
-                    let black_wins = gen.matches.iter().filter(|m| m.result == "0-1").count();
-                    let draws = gen.matches.iter().filter(|m| m.result == "1/2-1/2").count();
-                    let elos: Vec<f64> = gen.population.individuals.iter().map(|i| i.elo).collect();
-                    let top_elo = elos.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                    let lowest_elo = elos.iter().cloned().fold(f64::INFINITY, f64::min);
-                    let average_elo = elos.iter().sum::<f64>() / elos.len() as f64;
+    let paths: Vec<_> = std_fs::read_dir(evolution_dir)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.to_string_lossy().contains("generation_") && p.extension().map_or(false, |e| e == "json"))
+        .collect();
 
-                    summaries.push(GenerationSummary {
-                        generation_index: gen.generation_index,
-                        num_individuals: gen.population.individuals.len(),
-                        num_matches: gen.matches.len(),
-                        white_wins,
-                        black_wins,
-                        draws,
-                        top_elo,
-                        average_elo,
-                        lowest_elo,
-                    });
-                }
+    for path in paths {
+        if let Ok(json_content) = std_fs::read_to_string(&path) {
+            if let Ok(gen) = serde_json::from_str::<Generation>(&json_content) {
+                let config_path = evolution_dir.join(format!("generation_{}_config.json", gen.generation_index));
+                let selection_algorithm = std_fs::read_to_string(config_path)
+                    .ok()
+                    .and_then(|json| serde_json::from_str::<GenerationConfig>(&json).ok())
+                    .map(|config| config.selection_algorithm)
+                    .unwrap_or(SelectionAlgorithm::SwissTournament); // Default for older generations
+
+                let white_wins = gen.matches.iter().filter(|m| m.result == "1-0").count();
+                let black_wins = gen.matches.iter().filter(|m| m.result == "0-1").count();
+                let draws = gen.matches.iter().filter(|m| m.result == "1/2-1/2").count();
+                let elos: Vec<f64> = gen.population.individuals.iter().map(|i| i.elo).collect();
+                let top_elo = elos.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let lowest_elo = elos.iter().cloned().fold(f64::INFINITY, f64::min);
+                let average_elo = if elos.is_empty() { 0.0 } else { elos.iter().sum::<f64>() / elos.len() as f64 };
+
+                summaries.push(GenerationSummary {
+                    generation_index: gen.generation_index,
+                    num_individuals: gen.population.individuals.len(),
+                    num_matches: gen.matches.len(),
+                    white_wins,
+                    black_wins,
+                    draws,
+                    top_elo,
+                    average_elo,
+                    lowest_elo,
+                    selection_algorithm,
+                });
             }
         }
     }
+
     summaries.sort_by_key(|s| s.generation_index);
     Ok(summaries)
 }
