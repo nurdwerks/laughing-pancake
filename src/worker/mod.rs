@@ -9,7 +9,7 @@ use serde::Serialize;
 use shakmaty::{san::San, Chess, Move};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Status {
@@ -39,7 +39,7 @@ pub enum Job {
         best_move_san: String,
         config: SearchConfig,
         // Channel to send the boolean result (correct move or not) back.
-        result_tx: Sender<bool>,
+        result_tx: mpsc::UnboundedSender<bool>,
     },
 }
 
