@@ -1,6 +1,6 @@
 // src/server/mod.rs
 
-use crate::event::{Event, WsMessage, EVENT_BROKER};
+use crate::event::{Event, WebsocketState, WsMessage, EVENT_BROKER};
 use crate::ga::{Generation, Match};
 use crate::game::search::SearchConfig;
 use crate::sts::{StsResult, StsRunner};
@@ -11,7 +11,7 @@ use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
-use std::{fs as std_fs, io};
+use std::{fs as std_fs, io, time::Duration};
 
 #[derive(Serialize)]
 struct GenerationSummary {
@@ -272,12 +272,14 @@ struct WebSocketRequest {
 /// The WebSocket actor.
 struct MyWs {
     subscriptions: HashSet<Subscription>,
+    state_collector: Option<WebsocketState>,
 }
 
 impl MyWs {
     fn new() -> Self {
         Self {
             subscriptions: HashSet::new(),
+            state_collector: None,
         }
     }
 }
@@ -289,16 +291,38 @@ impl Actor for MyWs {
         let mut rx = EVENT_BROKER.subscribe();
         let addr = ctx.address();
 
+        // Spawn a task to handle incoming events
         actix_rt::spawn(async move {
             while let Ok(event) = rx.recv().await {
-                if matches!(
-                    event,
-                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_)
-                ) {
-                    addr.do_send(event);
-                }
+                addr.do_send(event);
             }
         });
+
+        // Spawn a task for periodic state updates
+        let addr = ctx.address();
+        actix_rt::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                addr.do_send(SendStateUpdate);
+            }
+        });
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SendStateUpdate;
+
+impl Handler<SendStateUpdate> for MyWs {
+    type Result = ();
+
+    fn handle(&mut self, _: SendStateUpdate, ctx: &mut Self::Context) {
+        if let Some(state) = self.state_collector.take() {
+            let ws_msg = WsMessage::State(state);
+            if let Ok(json) = serde_json::to_string(&ws_msg) {
+                ctx.text(json);
+            }
+        }
     }
 }
 
@@ -309,10 +333,9 @@ impl Handler<Event> for MyWs {
         let ws_msg = match msg {
             Event::WebsocketStateUpdate(state) => {
                 if self.subscriptions.contains(&Subscription::State) {
-                    Some(WsMessage::State(state))
-                } else {
-                    None
+                    self.state_collector = Some(state);
                 }
+                None
             }
             Event::LogUpdate(log) => {
                 if self.subscriptions.contains(&Subscription::Log) {

@@ -15,7 +15,7 @@ use std::{
     io,
     sync::{Arc, Mutex},
     thread,
-    time::{Duration, Instant},
+    time::{Duration},
 };
 use sysinfo::System;
 use tokio::sync::broadcast;
@@ -58,7 +58,6 @@ pub struct App {
     sts_leaderboard: Vec<StsLeaderboardEntry>,
     sts_hash_to_id_map: HashMap<u64, usize>,
     // Websocket state
-    last_ws_update: Instant,
     git_hash: String,
 }
 
@@ -91,7 +90,6 @@ impl App {
             sts_leaderboard: Vec::new(),
             sts_hash_to_id_map: HashMap::new(),
             // Websocket state
-            last_ws_update: Instant::now(),
             git_hash,
         }
     }
@@ -129,8 +127,6 @@ impl App {
     fn publish_ws_state_update(&mut self) {
         let state = self.get_websocket_state();
         EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
-
-        self.last_ws_update = Instant::now();
     }
 
     #[cfg_attr(test, allow(dead_code))]
