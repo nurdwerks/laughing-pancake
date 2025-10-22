@@ -21,12 +21,13 @@ use tokio::sync::{mpsc, oneshot, Semaphore};
 
 const EVOLUTION_DIR: &str = "evolution";
 
-/// Loads the configuration for the upcoming generation, or creates a new one,
-/// rotating the selection algorithm.
-fn load_or_create_generation_config(current_generation_index: u32) -> GenerationConfig {
-    let next_gen_index = current_generation_index + 1;
+/// Loads the configuration for the current generation, creating it if it doesn't exist.
+/// The selection algorithm is determined by the generation number.
+fn load_or_create_config_for_current_generation(
+    generation_index: u32,
+) -> GenerationConfig {
     let config_path =
-        Path::new(EVOLUTION_DIR).join(format!("generation_{next_gen_index}_config.json"));
+        Path::new(EVOLUTION_DIR).join(format!("generation_{generation_index}_config.json"));
 
     if config_path.exists() {
         if let Ok(json) = fs::read_to_string(&config_path) {
@@ -36,30 +37,21 @@ fn load_or_create_generation_config(current_generation_index: u32) -> Generation
         }
     }
 
-    // If config doesn't exist, create it by rotating from the previous one.
-    let prev_config_path =
-        Path::new(EVOLUTION_DIR).join(format!("generation_{current_generation_index}_config.json"));
-    let prev_selection_algo = if prev_config_path.exists() {
-        fs::read_to_string(prev_config_path)
-            .ok()
-            .and_then(|json| serde_json::from_str::<GenerationConfig>(&json).ok())
-            .map(|config| config.selection_algorithm)
-            .unwrap_or(SelectionAlgorithm::SwissTournament) // Default for gen 0
+    // Config doesn't exist, so create it based on the generation index.
+    let selection_algorithm = if generation_index % 2 == 0 {
+        // Even generations (0, 2, ...) are for STS evaluation.
+        SelectionAlgorithm::StsScore
     } else {
+        // Odd generations (1, 3, ...) are for Swiss Tournaments.
         SelectionAlgorithm::SwissTournament
     };
 
-    let next_selection_algo = match prev_selection_algo {
-        SelectionAlgorithm::SwissTournament => SelectionAlgorithm::StsScore,
-        SelectionAlgorithm::StsScore => SelectionAlgorithm::SwissTournament,
-    };
-
     let new_config = GenerationConfig {
-        selection_algorithm: next_selection_algo,
+        selection_algorithm,
     };
 
     let json = serde_json::to_string_pretty(&new_config).unwrap();
-    fs::write(config_path, json).expect("Failed to write new generation config");
+    fs::write(config_path, json).expect("Failed to write generation config");
 
     new_config
 }
@@ -215,17 +207,31 @@ impl EvolutionManager {
             }
             self.send_status(format!("--- Starting Generation {generation_index} ---"))?;
             EVENT_BROKER.publish(Event::GenerationStarted(generation_index));
+
             let generation_dir = setup_directories(generation_index);
+            let config = load_or_create_config_for_current_generation(generation_index);
 
             let base_population = Population::load(&generation_dir);
-            let mut generation = self.load_or_create_generation(generation_index, &base_population)?;
-            self.send_status(format!("Loaded {} individuals for generation {generation_index}.", generation.population.individuals.len()))?;
+            let mut generation =
+                self.load_or_create_generation(generation_index, &base_population)?;
+            self.send_status(format!(
+                "Loaded {} individuals for generation {generation_index}.",
+                generation.population.individuals.len()
+            ))?;
 
-            self.run_tournament(&mut generation, &cache_manager).await?;
+            // Only run the tournament for SwissTournament generations.
+            if config.selection_algorithm == SelectionAlgorithm::SwissTournament {
+                self.run_tournament(&mut generation, &cache_manager).await?;
+            } else {
+                self.send_status(format!(
+                    "Generation {generation_index} is an STS evaluation generation. Skipping tournament."
+                ))?;
+            }
 
             let next_generation_dir = setup_directories(generation_index + 1);
             let final_generation = generation.clone();
-            self.evolve_population(&final_generation, &next_generation_dir).await?;
+            self.evolve_population(&final_generation, &next_generation_dir, &config)
+                .await?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
@@ -278,11 +284,10 @@ impl EvolutionManager {
         &self,
         generation: &Generation,
         next_generation_dir: &Path,
+        config: &GenerationConfig,
     ) -> Result<(), ()> {
-        let config = load_or_create_generation_config(generation.generation_index);
-
         // Publish an event indicating the current selection mode
-		EVENT_BROKER.publish(Event::StsModeActive(
+        EVENT_BROKER.publish(Event::StsModeActive(
             config.selection_algorithm.clone(),
             generation.population.clone(),
         ));
