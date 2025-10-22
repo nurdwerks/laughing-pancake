@@ -7,8 +7,6 @@ pub mod mcts_cache;
 use shakmaty::{Chess, Move, Position, Piece, san::SanPlus, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use crate::game::evaluation;
-use crossbeam_utils::thread;
-use num_cpus;
 use evaluation_cache::EvaluationCache;
 pub use mcts_cache::{MctsCache, MctsNodeData};
 use crate::constants::MATE_SCORE;
@@ -259,55 +257,32 @@ impl PvsSearcher {
             score: 0,
             children: Vec::new(),
         };
+
         if legal_moves.is_empty() {
             return (None, self.evaluate_with_cache(args.pos, args.config), root_node);
         }
+
         self.order_moves(&mut legal_moves, args.pos, 0, args.config, None);
 
-        let num_threads = num_cpus::get();
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        thread::scope(|s| {
-            for moves_chunk in legal_moves.chunks( (legal_moves.len() / num_threads).max(1) ) {
-                let pos = args.pos.clone();
-                let config = args.config.clone();
-                let mut searcher = self.clone();
-                let tx = tx.clone();
-                let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
-
-                s.spawn(move |_| {
-                    let mut chunk_alpha = -MATE_SCORE;
-
-                    for m in &moves_chunk_owned {
-                        let mut new_pos = pos.clone();
-                        new_pos.play_unchecked(*m);
-                        let (score, child_node) =
-                            searcher.alpha_beta(&new_pos, args.depth - 1, 1, -args.beta, -chunk_alpha, &config);
-                        let score = -score;
-
-                        if score > chunk_alpha {
-                            chunk_alpha = score;
-                        }
-
-                        let san = SanPlus::from_move(pos.clone(), *m);
-                        let mut node = child_node;
-                        node.move_san = san.to_string();
-                        node.score = score;
-                        tx.send(((Some(*m), score), node)).unwrap();
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        drop(tx);
-
         let mut best_move = None;
-        for ((move_option, score), node) in rx.iter() {
+
+        for m in legal_moves {
+            let mut new_pos = args.pos.clone();
+            new_pos.play_unchecked(m);
+
+            let (score, child_node) =
+                self.alpha_beta(&new_pos, args.depth - 1, 1, -args.beta, -args.alpha, args.config);
+            let score = -score;
+
+            let san = SanPlus::from_move(args.pos.clone(), m);
+            let mut node = child_node;
+            node.move_san = san.to_string();
+            node.score = score;
             root_node.children.push(node);
+
             if score > args.alpha {
                 args.alpha = score;
-                best_move = move_option;
+                best_move = Some(m);
             }
         }
 
