@@ -9,6 +9,11 @@
 <body>
     <div class="container">
         <h1>Evolution History</h1>
+
+        <div id="current-generation-status" class="current-status-container">
+            <!-- Live status will be inserted here -->
+        </div>
+
         <table id="generations-table" class="data-table">
             <thead>
                 <tr>
@@ -31,27 +36,89 @@
     </div>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            fetch('/api/generations')
-                .then(response => response.json())
-                .then(data => {
-                    const tableBody = document.querySelector('#generations-table tbody');
-                    data.forEach(gen => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
-                            <td>${gen.selection_algorithm}</td>
-                            <td>${gen.num_individuals}</td>
-                            <td>${gen.num_matches}</td>
-                            <td>${gen.white_wins}</td>
-                            <td>${gen.black_wins}</td>
-                            <td>${gen.draws}</td>
-                            <td>${gen.top_elo.toFixed(2)}</td>
-                            <td>${gen.average_elo.toFixed(2)}</td>
-                            <td>${gen.lowest_elo.toFixed(2)}</td>
-                        `;
-                        tableBody.appendChild(row);
+            function connect() {
+                const ws = new WebSocket(`${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`);
+                ws.onopen = () => ws.send(JSON.stringify({ subscribe: "State" }));
+                ws.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.type === 'State') {
+                        updateCurrentGenerationStatus(msg.payload);
+                    }
+                };
+                ws.onclose = () => setTimeout(connect, 1000);
+                ws.onerror = () => ws.close();
+            }
+
+            function fetchGenerations() {
+                fetch('/api/generations')
+                    .then(response => response.json())
+                    .then(data => {
+                        const tableBody = document.querySelector('#generations-table tbody');
+                        tableBody.innerHTML = '';
+                        if (data.length === 0) {
+                            const row = document.createElement('tr');
+                            const cell = document.createElement('td');
+                            cell.colSpan = 10;
+                            cell.textContent = 'No completed generations found.';
+                            cell.style.textAlign = 'center';
+                            row.appendChild(cell);
+                            tableBody.appendChild(row);
+                        } else {
+                            data.forEach(gen => {
+                                const row = document.createElement('tr');
+                                row.innerHTML = `
+                                    <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
+                                    <td>${gen.selection_algorithm}</td>
+                                    <td>${gen.num_individuals}</td>
+                                    <td>${gen.num_matches}</td>
+                                    <td>${gen.white_wins}</td>
+                                    <td>${gen.black_wins}</td>
+                                    <td>${gen.draws}</td>
+                                    <td>${gen.top_elo.toFixed(2)}</td>
+                                    <td>${gen.average_elo.toFixed(2)}</td>
+                                    <td>${gen.lowest_elo.toFixed(2)}</td>
+                                `;
+                                tableBody.appendChild(row);
+                            });
+                        }
                     });
-                });
+            }
+
+            function updateCurrentGenerationStatus(state) {
+                const statusDiv = document.getElementById('current-generation-status');
+                if (!statusDiv) return;
+
+                const {
+                    evolution_current_generation,
+                    selection_algorithm,
+                    evolution_current_round,
+                    evolution_total_rounds,
+                    evolution_matches_completed,
+                    evolution_total_matches
+                } = state;
+
+                let content = `<h2>Current Generation: ${evolution_current_generation}</h2>`;
+                if (evolution_total_matches > 0) {
+                    let algorithmText = selection_algorithm;
+                    if (selection_algorithm === 'StsScore') {
+                        algorithmText = `<a href="sts.html">${selection_algorithm}</a>`;
+                    }
+                    content += `
+                        <p>
+                            <strong>Algorithm:</strong> ${algorithmText} |
+                            <strong>Round:</strong> ${evolution_current_round}/${evolution_total_rounds} |
+                            <strong>Matches:</strong> ${evolution_matches_completed}/${evolution_total_matches}
+                        </p>
+                        <progress value="${evolution_matches_completed}" max="${evolution_total_matches}" style="width: 100%;"></progress>
+                    `;
+                } else {
+                     content += '<p>Waiting for the first generation to start...</p>';
+                }
+                 statusDiv.innerHTML = content;
+            }
+
+            fetchGenerations();
+            connect();
         });
     </script>
 </body>
