@@ -13,7 +13,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE, ENABLE_MOVE_LIMIT};
-use crate::event::{Event, MatchResult, EVENT_BROKER};
+use crate::event::{Event, MatchResult, EVENT_BROKER, SelectionAlgorithm, StsLeaderboardEntry};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::sts::{StsResult, StsRunner};
 use crate::worker::{push_job, Job};
@@ -64,12 +64,6 @@ fn load_or_create_generation_config(current_generation_index: u32) -> Generation
     fs::write(config_path, json).expect("Failed to write new generation config");
 
     new_config
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SelectionAlgorithm {
-    SwissTournament,
-    StsScore,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -288,6 +282,9 @@ impl EvolutionManager {
         next_generation_dir: &Path,
     ) -> Result<(), ()> {
         let config = load_or_create_generation_config(generation.generation_index);
+
+        // Publish an event indicating the current selection mode
+        EVENT_BROKER.publish(Event::StsModeActive(config.selection_algorithm.clone()));
 
         match config.selection_algorithm {
             SelectionAlgorithm::SwissTournament => {
@@ -575,12 +572,14 @@ impl EvolutionManager {
 
     /// Runs STS tests for the entire population and waits for all to complete.
     async fn run_sts_for_population(&self, population: &Population) -> Result<Vec<StsResult>, ()> {
-        let (tx, rx): (crossbeam_channel::Sender<StsResult>, Receiver<StsResult>) = crossbeam_channel::unbounded();
+        let (tx, rx): (crossbeam_channel::Sender<(usize, StsResult)>, Receiver<(usize, StsResult)>) =
+            crossbeam_channel::unbounded();
         let total_tasks = population.individuals.len();
 
         for individual in &population.individuals {
             let tx_clone = tx.clone();
             let config = individual.config.clone();
+            let individual_id = individual.id;
 
             tokio::spawn(async move {
                 let mut sts_runner = StsRunner::new(config);
@@ -594,18 +593,26 @@ impl EvolutionManager {
                             * 100.0
                             - 242.85,
                     );
-                    tx_clone.send(result).unwrap();
+                    tx_clone.send((individual_id, result)).unwrap();
                 }
             });
         }
         drop(tx); // Drop the original sender
 
         let mut results = Vec::new();
-        for result in rx {
+        for (individual_id, result) in rx {
+            let progress = result.completed_positions as f64 / result.total_positions as f64;
+            EVENT_BROKER.publish(Event::StsProgress(StsLeaderboardEntry {
+                individual_id,
+                progress,
+                elo: result.elo,
+            }));
+
             results.push(result);
+
             self.send_status(format!(
-                "STS run complete for hash {}. ({}/{})",
-                results.last().unwrap().config_hash,
+                "STS run complete for individual {}. ({}/{})",
+                individual_id,
                 results.len(),
                 total_tasks
             ))?;

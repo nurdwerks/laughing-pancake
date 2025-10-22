@@ -19,6 +19,20 @@ use crate::server::StsRunResponse;
 
 // This struct contains the entire state of the application that the web UI needs to render.
 use crate::worker::WorkerStatus;
+use serde::Deserialize;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SelectionAlgorithm {
+    SwissTournament,
+    StsScore,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct StsLeaderboardEntry {
+    pub individual_id: usize,
+    pub progress: f64,
+    pub elo: Option<f64>,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
@@ -36,6 +50,8 @@ pub struct WebsocketState {
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatchState>,
     pub worker_statuses: Vec<WorkerStatus>,
+    pub selection_algorithm: SelectionAlgorithm,
+    pub sts_leaderboard: Vec<StsLeaderboardEntry>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -95,6 +111,8 @@ pub enum Event {
     StsUpdate(StsUpdate),
     StsStarted(StsRunResponse),
     // Events used by the TUI and backend logic
+    StsModeActive(SelectionAlgorithm),
+    StsProgress(StsLeaderboardEntry),
     TournamentStart(usize, usize, usize),
     GenerationStarted(u32),
     GenerationComplete(GenerationStats),

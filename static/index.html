@@ -212,10 +212,61 @@
         }
 
 
+        function updateStsLeaderboard(leaderboard) {
+            const container = document.getElementById('matches-container');
+            container.innerHTML = ''; // Clear existing content
+
+            if (!leaderboard || leaderboard.length === 0) {
+                container.innerHTML = '<div style="text-align: center; width: 100%;">Waiting for STS results...</div>';
+                return;
+            }
+
+            // Sort by ELO descending, with nulls last
+            leaderboard.sort((a, b) => {
+                if (a.elo === null) return 1;
+                if (b.elo === null) return -1;
+                return b.elo - a.elo;
+            });
+
+            const table = document.createElement('table');
+            table.className = 'data-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Individual ID</th>
+                        <th>STS ELO</th>
+                        <th>Progress</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            `;
+            const tbody = table.querySelector('tbody');
+
+            leaderboard.forEach((entry, index) => {
+                const row = document.createElement('tr');
+                const elo = entry.elo !== null ? entry.elo.toFixed(2) : 'N/A';
+                row.innerHTML = `
+                    <td>${index + 1}</td>
+                    <td><a href="/individual.html?gen_id=unknown&ind_id=${entry.individual_id}">Individual ${entry.individual_id}</a></td>
+                    <td>${elo}</td>
+                    <td><progress value="${entry.progress}" max="1"></progress></td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            container.appendChild(table);
+        }
+
         function updateUi(state) {
             updateStatusBar(state);
             updateSystemStats(state);
-            updateMatches(state.active_matches);
+            if (state.selection_algorithm === 'StsScore') {
+                updateStsLeaderboard(state.sts_leaderboard);
+            } else {
+                updateMatches(state.active_matches);
+            }
             updateWorkers(state.worker_statuses);
         }
 
