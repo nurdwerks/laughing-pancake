@@ -9,10 +9,11 @@ use shakmaty::{Chess, Position, zobrist::{Zobrist64, ZobristHash}, EnPassantMode
 use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
-use crate::app::Worker;
 use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE, ENABLE_MOVE_LIMIT};
-use crate::game::search::{self, SearchConfig, SearchAlgorithm, PvsSearcher, Searcher, evaluation_cache::EvaluationCache};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
+use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
+use crate::worker::{push_job, Job};
+use tokio::sync::oneshot;
 
 const EVOLUTION_DIR: &str = "evolution";
 
@@ -96,19 +97,16 @@ impl Drop for CacheGuard {
 /// Manages the evolution process in a background thread.
 #[derive(Clone)]
 pub struct EvolutionManager {
-    workers: Arc<Mutex<Vec<Worker>>>,
     should_quit: Arc<Mutex<bool>>,
     match_id_counter: Arc<Mutex<usize>>,
 }
 
 impl EvolutionManager {
     pub fn new(
-        workers: Arc<Mutex<Vec<Worker>>>,
         should_quit: Arc<Mutex<bool>>,
         match_id_counter: Arc<Mutex<usize>>,
     ) -> Self {
         Self {
-            workers,
             should_quit,
             match_id_counter,
         }
@@ -120,11 +118,14 @@ impl EvolutionManager {
     }
 
     pub fn run(&self) {
-        let result = std::panic::catch_unwind(|| {
-            if self.run_internal().is_err() {
-                // The receiver has been dropped, so the thread can exit.
-            }
-        });
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rt.block_on(self.run_internal())
+        }));
 
         if let Err(e) = result {
             let panic_msg = if let Some(s) = e.downcast_ref::<String>() {
@@ -138,7 +139,7 @@ impl EvolutionManager {
         }
     }
 
-    fn run_internal(&self) -> Result<(), ()> {
+    async fn run_internal(&self) -> Result<(), ()> {
         self.send_status("Starting evolution process".to_string())?;
         let mut generation_index = find_latest_complete_generation().unwrap_or(0);
         if generation_index > 0 {
@@ -168,10 +169,11 @@ impl EvolutionManager {
             let mut generation = self.load_or_create_generation(generation_index, &base_population)?;
             self.send_status(format!("Loaded {} individuals for generation {generation_index}.", generation.population.individuals.len()))?;
 
-            self.run_tournament(&mut generation, &cache_manager)?;
+            self.run_tournament(&mut generation, &cache_manager).await?;
 
             let next_generation_dir = setup_directories(generation_index + 1);
-            self.evolve_population(&generation, &next_generation_dir)?;
+            let final_generation = generation.clone();
+            self.evolve_population(&final_generation, &next_generation_dir)?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
@@ -376,62 +378,68 @@ impl EvolutionManager {
     }
 
     /// Runs a 7-round Swiss tournament using the Dutch pairing system.
-    fn run_tournament(
+    async fn run_tournament(
         &self,
         generation: &mut Generation,
         cache_manager: &CacheManager,
     ) -> Result<(), ()> {
+        let generation_arc = Arc::new(Mutex::new(generation.clone()));
+
         self.send_status(format!(
             "Running tournament for generation {}",
             generation.generation_index
         ))?;
 
-        for round in generation.round..=NUM_ROUNDS {
+        let start_round = generation.round;
+        for round in start_round..=NUM_ROUNDS {
             if *self.should_quit.lock().unwrap() {
                 self.send_status("Shutdown signal received, stopping tournament.".to_string())?;
                 break;
             }
 
-            generation.round = round;
-            self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
+            {
+                let mut gen_lock = generation_arc.lock().unwrap();
+                gen_lock.round = round;
+                self.send_status(format!("\n--- Round {round}/{NUM_ROUNDS} ---"))?;
 
-            if generation.round_pairings.is_empty() {
-                self.send_status("Generating pairings for the round.".to_string())?;
-                generation.round_pairings =
-                    self.generate_pairings(generation, round);
-                generation.match_id_counter = *self.match_id_counter.lock().unwrap();
-                save_generation(generation);
-            } else {
-                self.send_status("Using existing pairings for the round.".to_string())?;
+                if gen_lock.round_pairings.is_empty() {
+                    self.send_status("Generating pairings for the round.".to_string())?;
+                    gen_lock.round_pairings = self.generate_pairings(&mut gen_lock, round);
+                    gen_lock.match_id_counter = *self.match_id_counter.lock().unwrap();
+                    save_generation(&gen_lock);
+                } else {
+                    self.send_status("Using existing pairings for the round.".to_string())?;
+                }
             }
 
-            // 2. Play the matches for the current round
-            let round_matches = generation.round_pairings.clone();
-            self.play_round_matches(&round_matches, generation, cache_manager)?;
-            generation.round_pairings.clear();
+            let round_matches = generation_arc.lock().unwrap().round_pairings.clone();
+            self.play_round_matches(&round_matches, generation_arc.clone(), cache_manager).await?;
 
-            // 3. Save state after each round
-            generation.match_id_counter = *self.match_id_counter.lock().unwrap();
-            save_generation(generation);
-            self.send_status(format!("Round {round} complete. Saved progress."))?;
+            {
+                let mut gen_lock = generation_arc.lock().unwrap();
+                gen_lock.round_pairings.clear();
+                gen_lock.match_id_counter = *self.match_id_counter.lock().unwrap();
+                save_generation(&gen_lock);
+                self.send_status(format!("Round {round} complete. Saved progress."))?;
+            }
         }
 
-    // At the end of the tournament, print final ELOs.
-    generation.population.individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
-    self.send_status("\n--- Final Tournament Standings ---".to_string())?;
-    for (rank, individual) in generation.population.individuals.iter().enumerate() {
-        self.send_status(format!(
-            "#{:<3} Individual {:<3} | ELO: {:.2}",
-            rank + 1,
-            individual.id,
-            individual.elo
-        ))?;
-    }
+        let mut final_generation = generation_arc.lock().unwrap().clone();
+        final_generation.population.individuals.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+        self.send_status("\n--- Final Tournament Standings ---".to_string())?;
+        for (rank, individual) in final_generation.population.individuals.iter().enumerate() {
+            self.send_status(format!(
+                "#{:<3} Individual {:<3} | ELO: {:.2}",
+                rank + 1,
+                individual.id,
+                individual.elo
+            ))?;
+        }
 
-    let white_wins = generation.matches.iter().filter(|m| m.result == "1-0").count();
-    let black_wins = generation.matches.iter().filter(|m| m.result == "0-1").count();
-    let draws = generation.matches.iter().filter(|m| m.result == "1/2-1/2").count();
-    let elos: Vec<f64> = generation.population.individuals.iter().map(|i| i.elo).collect();
+        let white_wins = final_generation.matches.iter().filter(|m| m.result == "1-0").count();
+        let black_wins = final_generation.matches.iter().filter(|m| m.result == "0-1").count();
+        let draws = final_generation.matches.iter().filter(|m| m.result == "1/2-1/2").count();
+        let elos: Vec<f64> = final_generation.population.individuals.iter().map(|i| i.elo).collect();
     let top_elo = elos.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let lowest_elo = elos.iter().cloned().fold(f64::INFINITY, f64::min);
     let average_elo = elos.iter().sum::<f64>() / elos.len() as f64;
@@ -541,192 +549,154 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
 }
 
 
-/// Plays a set of matches, updating population and generation state.
-fn play_round_matches(
-    &self,
-    matches_to_play: &[Match],
-    generation: &mut Generation,
-    cache_manager: &CacheManager,
-) -> Result<(), ()> {
-    // Identify completed matches for the current round to avoid re-playing them.
-    let completed_match_keys: HashSet<(String, String)> = generation
-        .matches
-        .iter()
-        .filter(|m| m.round == generation.round)
-        .map(|m| (m.white_player_name.clone(), m.black_player_name.clone()))
-        .collect();
+    /// Plays a set of matches, updating population and generation state.
+    async fn play_round_matches(
+        &self,
+        matches_to_play: &[Match],
+        generation: Arc<Mutex<Generation>>,
+        cache_manager: &CacheManager,
+    ) -> Result<(), ()> {
+        let round;
+        let pending_matches;
+        {
+            let gen = generation.lock().unwrap();
+            round = gen.round;
+            let completed_match_keys: HashSet<(String, String)> = gen
+                .matches
+                .iter()
+                .filter(|m| m.round == round)
+                .map(|m| (m.white_player_name.clone(), m.black_player_name.clone()))
+                .collect();
 
-    let pending_matches: Vec<Match> = matches_to_play
-        .iter()
-        .filter(|m| {
-            !completed_match_keys.contains(&(m.white_player_name.clone(), m.black_player_name.clone()))
-        })
-        .cloned()
-        .collect();
-
-    let skipped_matches = matches_to_play.len() - pending_matches.len();
-    if skipped_matches > 0 || pending_matches.is_empty() {
-        self.send_status(format!(
-            "Round {}: {} matches to play ({} already completed).",
-            generation.round,
-            pending_matches.len(),
-            skipped_matches
-        ))?;
-    }
-
-    let total_matches = matches_to_play.len();
-    EVENT_BROKER.publish(Event::TournamentStart(
-        generation.round as usize,
-        total_matches,
-        skipped_matches,
-    ));
-
-    let (results_tx, results_rx) = crossbeam_channel::unbounded();
-    let (jobs_tx, jobs_rx) = crossbeam_channel::unbounded::<(usize, Match)>();
-    let population_arc = Arc::new(generation.population.clone());
-
-        // Spawn a pool of worker threads
-        const NUM_WORKERS: usize = 3;
-        let mut worker_handles = Vec::new();
-        for _ in 0..NUM_WORKERS {
-            let jobs_rx_clone = jobs_rx.clone();
-            let results_tx_clone = results_tx.clone();
-            let population_clone = Arc::clone(&population_arc);
-            let cache_manager_clone = cache_manager.clone();
-            let self_clone = self.clone();
-
-            let handle = std::thread::spawn(move || {
-                while let Ok((match_index, game_match)) = jobs_rx_clone.recv() {
-                    let white_player_name = game_match.white_player_name.clone();
-                    let black_player_name = game_match.black_player_name.clone();
-
-                    let white_id = parse_id_from_name(&white_player_name);
-                    let black_id = parse_id_from_name(&black_player_name);
-                    let white_config = &population_clone.individuals[white_id].config;
-                    let black_config = &population_clone.individuals[black_id].config;
-
-                    let white_cache_guard = cache_manager_clone.get_cache_for_config(white_config);
-                    let black_cache_guard = cache_manager_clone.get_cache_for_config(black_config);
-
-                    EVENT_BROKER.publish(Event::MatchStarted(match_index, white_player_name, black_player_name));
-                    if let Ok((result, san)) = self_clone.play_game(match_index, white_config, black_config, &white_cache_guard, &black_cache_guard) {
-                        results_tx_clone.send((match_index, game_match, result, san)).unwrap_or(());
-                    }
-                }
-            });
-            worker_handles.push(handle);
+            pending_matches = matches_to_play
+                .iter()
+                .filter(|m| !completed_match_keys.contains(&(m.white_player_name.clone(), m.black_player_name.clone())))
+                .cloned()
+                .collect::<Vec<Match>>();
         }
 
-        // Send all jobs to the workers
-    for game_match in pending_matches.iter().cloned() {
+        let skipped_matches = matches_to_play.len() - pending_matches.len();
+        if skipped_matches > 0 || pending_matches.is_empty() {
+            self.send_status(format!(
+                "Round {}: {} matches to play ({} already completed).",
+                round,
+                pending_matches.len(),
+                skipped_matches
+            ))?;
+        }
+
+        let total_matches = matches_to_play.len();
+        EVENT_BROKER.publish(Event::TournamentStart(round as usize, total_matches, skipped_matches));
+
+        let mut match_tasks = Vec::new();
+
+        for mut game_match in pending_matches {
             if *self.should_quit.lock().unwrap() {
                 break;
             }
-            let mut counter = self.match_id_counter.lock().unwrap();
-            let match_id = *counter;
-            *counter += 1;
-            if jobs_tx.send((match_id, game_match)).is_err() {
-                // This would happen if all worker threads panicked and the channel is closed.
-                break;
+            let match_id;
+            {
+                let mut counter = self.match_id_counter.lock().unwrap();
+                match_id = *counter;
+                *counter += 1;
             }
-        }
-    drop(jobs_tx); // Close the jobs channel, workers will exit after finishing their work.
-    drop(results_tx); // Drop the main thread's sender to ensure the channel closes correctly
 
-    // Process results as they come in.
-    // We explicitly loop only for the number of matches we dispatched.
-    // This prevents the process from hanging if a worker thread panics or stalls.
-    let mut matches_processed = 0;
-    while matches_processed < pending_matches.len() {
-        if let Ok((match_index, mut current_match, result, san)) = results_rx.recv() {
-            current_match.san = san;
-            current_match.status = "completed".to_string();
+            let self_clone = self.clone();
+            let generation_clone = generation.clone();
+            let cache_manager_clone = cache_manager.clone();
 
-            let white_id = parse_id_from_name(&current_match.white_player_name);
-            let black_id = parse_id_from_name(&current_match.black_player_name);
+            let task = tokio::spawn(async move {
+                let (white_config, black_config) = {
+                    let gen_lock = generation_clone.lock().unwrap();
+                    let white_id = parse_id_from_name(&game_match.white_player_name);
+                    let black_id = parse_id_from_name(&game_match.black_player_name);
+                    (
+                        gen_lock.population.individuals[white_id].config.clone(),
+                        gen_lock.population.individuals[black_id].config.clone(),
+                    )
+                };
 
-        let new_white_elo;
-        let new_black_elo;
-        {
-            let population = &mut generation.population;
-            let white_elo = population.individuals.iter().find(|i| i.id == white_id).unwrap().elo;
-            let black_elo = population.individuals.iter().find(|i| i.id == black_id).unwrap().elo;
+                let white_cache_guard = cache_manager_clone.get_cache_for_config(&white_config);
+                let black_cache_guard = cache_manager_clone.get_cache_for_config(&black_config);
 
-            (new_white_elo, new_black_elo) = match result {
-                GameResult::WhiteWin => {
-                    current_match.result = "1-0".to_string();
-                    update_elo(white_elo, black_elo, 1.0)
+                EVENT_BROKER.publish(Event::MatchStarted(
+                    match_id,
+                    game_match.white_player_name.clone(),
+                    game_match.black_player_name.clone(),
+                ));
+
+                if let Ok((result, san)) = self_clone.play_game(match_id, &white_config, &black_config, &white_cache_guard, &black_cache_guard).await {
+                    game_match.san = san;
+                    game_match.status = "completed".to_string();
+
+                    let white_id = parse_id_from_name(&game_match.white_player_name);
+                    let black_id = parse_id_from_name(&game_match.black_player_name);
+
+                    {
+                        let mut gen_lock = generation_clone.lock().unwrap();
+                        let white_elo = gen_lock.population.individuals.iter().find(|i| i.id == white_id).unwrap().elo;
+                        let black_elo = gen_lock.population.individuals.iter().find(|i| i.id == black_id).unwrap().elo;
+
+                        let (new_white_elo, new_black_elo) = match result {
+                            GameResult::WhiteWin => {
+                                game_match.result = "1-0".to_string();
+                                update_elo(white_elo, black_elo, 1.0)
+                            }
+                            GameResult::BlackWin => {
+                                game_match.result = "0-1".to_string();
+                                update_elo(white_elo, black_elo, 0.0)
+                            }
+                            GameResult::Draw => {
+                                game_match.result = "1/2-1/2".to_string();
+                                update_elo(white_elo, black_elo, 0.5)
+                            }
+                        };
+                        gen_lock.population.individuals.iter_mut().find(|i| i.id == white_id).unwrap().elo = new_white_elo;
+                        gen_lock.population.individuals.iter_mut().find(|i| i.id == black_id).unwrap().elo = new_black_elo;
+
+                        gen_lock.matches.push(game_match.clone());
+                        save_generation(&gen_lock);
+                    }
+
+                    let result_event = MatchResult {
+                        white_player_name: game_match.white_player_name.clone(),
+                        black_player_name: game_match.black_player_name.clone(),
+                        result: game_match.result.clone(),
+                    };
+                    EVENT_BROKER.publish(Event::MatchCompleted(match_id, result_event));
                 }
-                GameResult::BlackWin => {
-                    current_match.result = "0-1".to_string();
-                    update_elo(white_elo, black_elo, 0.0)
-                }
-                GameResult::Draw => {
-                    current_match.result = "1/2-1/2".to_string();
-                    update_elo(white_elo, black_elo, 0.5)
-                }
-            };
-            population.individuals.iter_mut().find(|i| i.id == white_id).unwrap().elo = new_white_elo;
-            population.individuals.iter_mut().find(|i| i.id == black_id).unwrap().elo = new_black_elo;
+            });
+            match_tasks.push(task);
         }
 
-        generation.matches.push(current_match.clone());
-            save_generation(generation);
-
-            let result_event = MatchResult {
-                white_player_name: current_match.white_player_name.clone(),
-                black_player_name: current_match.black_player_name.clone(),
-                result: current_match.result.clone(),
-            };
-            EVENT_BROKER.publish(Event::MatchCompleted(match_index, result_event));
-            matches_processed += 1;
-        } else {
-            // Channel is empty and disconnected, means all senders (workers) are gone.
-            // This can happen if all workers panic.
-            self.send_status("Error: Worker channel disconnected unexpectedly. Ending round.".to_string())?;
-            break;
+        // Wait for all spawned match tasks to complete.
+        for task in match_tasks {
+            let _ = task.await;
         }
-    }
-        drop(results_rx);
 
-        // Wait for all worker threads to finish
-        for handle in worker_handles {
-            handle.join().unwrap();
-        }
         Ok(())
     }
 
     /// Simulates a single game between two AI configurations.
-    fn play_game(
+    async fn play_game(
         &self,
         match_id: usize,
         white_config: &SearchConfig,
         black_config: &SearchConfig,
-        white_cache_guard: &CacheGuard,
-        black_cache_guard: &CacheGuard,
+        _white_cache_guard: &CacheGuard, // Caching is now per-worker
+        _black_cache_guard: &CacheGuard,
     ) -> Result<(GameResult, String), ()> {
         let mut pos = Chess::default();
         let mut sans = Vec::new();
-
-        let mut white_searcher: Box<dyn Searcher> = if white_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::with_shared_cache(white_cache_guard.cache.clone()))
-        } else {
-            Box::new(search::mcts::MctsSearcher::new())
-        };
-
-        let mut black_searcher: Box<dyn Searcher> = if black_config.search_algorithm == SearchAlgorithm::Pvs {
-            Box::new(PvsSearcher::with_shared_cache(black_cache_guard.cache.clone()))
-        } else {
-            Box::new(search::mcts::MctsSearcher::new())
-        };
         let mut position_counts: HashMap<u64, u32> = HashMap::new();
         let mut game_result_override = None;
+
         while !pos.is_game_over() {
-            // End the game in a draw after 100 moves (200 half-moves/plies).
             if ENABLE_MOVE_LIMIT && sans.len() >= 200 {
                 game_result_override = Some(GameResult::Draw);
                 break;
             }
+
             let zobrist_hash: Zobrist64 = pos.zobrist_hash(EnPassantMode::Legal);
             let count = position_counts.entry(zobrist_hash.0).or_insert(0);
             *count += 1;
@@ -734,42 +704,58 @@ fn play_round_matches(
                 game_result_override = Some(GameResult::Draw);
                 break;
             }
-            let (config, searcher) = if pos.turn().is_white() {
-                (white_config.clone(), &mut white_searcher)
+
+            let config = if pos.turn().is_white() {
+                white_config.clone()
             } else {
-                (black_config.clone(), &mut black_searcher)
+                black_config.clone()
             };
-            let current_pos = pos.clone();
 
-            let (search_result_tx, search_result_rx) = crossbeam_channel::unbounded();
-
-            let thinking_msg = format!("AI is thinking for {:?}...", current_pos.turn());
+            let thinking_msg = format!("AI is thinking for {:?}...", pos.turn());
             EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, thinking_msg, 0));
 
-            let workers = self.workers.clone();
-            crossbeam_utils::thread::scope(|s| {
-                s.spawn(|_| {
-                    let search_result = searcher.search(&current_pos, config.search_depth, &config, Some(workers), Some(match_id));
-                    search_result_tx.send(search_result).unwrap();
-                });
+            // Create a oneshot channel to get the result from the worker.
+            let (result_tx, result_rx) = oneshot::channel();
+            let job = Job::FindBestMove {
+                pos: pos.clone(),
+                config,
+                result_tx,
+            };
+            push_job(job);
 
-                crossbeam_channel::select! {
-                    recv(search_result_rx) -> msg => {
-                        if let Ok((best_move, eval, _final_tree)) = msg {
-                            EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, format!("AI finished thinking for {:?}...", current_pos.turn()), eval));
-                            if let Some(m) = best_move {
-                                let san = SanPlus::from_move(pos.clone(), m);
-                                sans.push(san);
-                                pos.play_unchecked(m);
+            // Await the result from the worker.
+            if let Ok((best_move, eval, _final_tree)) = result_rx.await {
+                let thinking_done_msg = format!("AI finished thinking for {:?}...", pos.turn());
+                EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, thinking_done_msg, eval));
 
-                                let material_diff = calculate_material_difference(&pos);
-                                let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
-                                EVENT_BROKER.publish(Event::MovePlayed(match_id, last_san, material_diff, pos.clone()));
-                            }
-                        }
-                    }
+                if let Some(m) = best_move {
+                    let san = SanPlus::from_move(pos.clone(), m);
+                    sans.push(san);
+                    pos.play_unchecked(m);
+
+                    let material_diff = calculate_material_difference(&pos);
+                    let last_san = sans.last().map(|s| s.to_string()).unwrap_or_default();
+                    EVENT_BROKER.publish(Event::MovePlayed(
+                        match_id,
+                        last_san,
+                        material_diff,
+                        pos.clone(),
+                    ));
+                } else {
+                    // This case can happen if the AI finds no legal moves,
+                    // which shouldn't happen if the game isn't over.
+                    // We'll treat it as a draw to be safe.
+                    game_result_override = Some(GameResult::Draw);
+                    break;
                 }
-            }).unwrap();
+            } else {
+                // The sender was dropped, maybe the worker panicked.
+                // Log an error and end the game as a draw.
+                let error_msg = format!("Error: Worker for match {match_id} failed to return a move.");
+                EVENT_BROKER.publish(Event::StatusUpdate(error_msg));
+                game_result_override = Some(GameResult::Draw);
+                break;
+            }
         }
 
         let result = if let Some(res) = game_result_override {
@@ -1250,7 +1236,7 @@ mod tests {
             match_id_counter: 0,
         };
 
-        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
         evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
 
         // Check that the next generation was created
@@ -1291,7 +1277,7 @@ mod tests {
             match_id_counter: 0,
         };
 
-        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(vec![])), Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
         evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
 
         // Check that the next generation was created

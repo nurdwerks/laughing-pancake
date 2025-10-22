@@ -16,6 +16,8 @@ pub struct ComponentState {
 use crate::server::StsRunResponse;
 
 // This struct contains the entire state of the application that the web UI needs to render.
+use crate::worker::WorkerStatus;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct WebsocketState {
     pub git_hash: String,
@@ -31,14 +33,7 @@ pub struct WebsocketState {
     pub evolution_matches_completed: usize,
     pub evolution_total_matches: usize,
     pub active_matches: HashMap<usize, ActiveMatchState>,
-    pub evolution_workers: Vec<WorkerState>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct WorkerState {
-    pub id: u64,
-    pub name: String,
-    pub elapsed_time: f64,
+    pub worker_statuses: Vec<WorkerStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]

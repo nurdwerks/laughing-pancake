@@ -22,7 +22,7 @@
                 <div id="log-content" class="scroll-content"></div>
             </div>
             <div id="workers-container" style="flex: 1;">
-                <h2>Running Threads</h2>
+                <h2>Worker Status</h2>
                 <div id="workers-content" class="scroll-content"></div>
             </div>
             <div id="system-stats-container" style="flex: 1;">
@@ -216,7 +216,7 @@
             updateStatusBar(state);
             updateSystemStats(state);
             updateMatches(state.active_matches);
-            updateWorkers(state.evolution_workers);
+            updateWorkers(state.worker_statuses);
         }
 
         function appendLog(message) {
@@ -237,15 +237,25 @@
             }
         }
 
-        function updateWorkers(workers) {
+        function updateWorkers(statuses) {
             const container = document.getElementById('workers-content');
-            if (workers.length === 0) {
-                container.innerHTML = 'Waiting for AI move...';
+            if (!statuses || statuses.length === 0) {
+                container.innerHTML = 'Initializing workers...';
                 return;
             }
-            container.innerHTML = workers
-                .sort((a, b) => b.elapsed_time - a.elapsed_time)
-                .map(w => `<div>${w.elapsed_time.toFixed(2)}s: ${w.name}</div>`)
+            container.innerHTML = statuses
+                .sort((a, b) => a.id - b.id)
+                .map(s => {
+                    let statusText;
+                    if (s.status.Busy) {
+                        // Extract the job type from the debug string for cleaner display
+                        const jobType = s.status.Busy.split(' ')[0].replace('{', '');
+                        statusText = `<span style="color: #ff8c00;">Busy: ${jobType}</span>`;
+                    } else {
+                        statusText = '<span style="color: #00ff00;">Idle</span>';
+                    }
+                    return `<div>Worker ${s.id}: ${statusText}</div>`;
+                })
                 .join('');
         }
 

@@ -168,27 +168,9 @@ fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(temp_paragraph, area);
 }
 
-fn draw_worker_list(frame: &mut Frame, app: &App, area: Rect) {
-    let workers_block = Block::default().borders(Borders::ALL).title("Running Threads");
-    let worker_items: Vec<ListItem> = {
-        let workers = app.evolution_workers.lock().unwrap();
-        let mut worker_vec: Vec<_> = workers.iter().cloned().collect();
-        // Sort by start_time ascending, so longest running are first
-        worker_vec.sort_by_key(|w| w.start_time);
-        worker_vec
-            .iter()
-            .map(|w| {
-                let elapsed = w.start_time.elapsed();
-                ListItem::new(format!("{:.2?}: {}", elapsed, w.name))
-            })
-            .collect()
-    };
-
-    let list = if worker_items.is_empty() {
-        List::new([ListItem::new("Waiting for AI move...")])
-    } else {
-        List::new(worker_items)
-    };
+fn draw_worker_list(frame: &mut Frame, _app: &App, area: Rect) {
+    let workers_block = Block::default().borders(Borders::ALL).title("Worker Status");
+    let list = List::new([ListItem::new("Status now handled by Web UI.")]);
     frame.render_widget(list.block(workers_block), area);
 }
 
