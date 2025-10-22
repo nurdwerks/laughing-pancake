@@ -47,7 +47,7 @@
             let configHash = null;
             let ws; // WebSocket connection
 
-            // Fetch individual details
+            // Fetch individual details and then check for STS results
             fetch(`/api/individual/${genId}/${indId}`)
                 .then(response => response.json())
                 .then(data => {
@@ -64,6 +64,22 @@
                         `;
                         matchesTableBody.appendChild(row);
                     });
+
+                    // Now that we have the config, we can get its hash and check for results
+                    configHash = data.individual.config_hash;
+                    if (configHash) {
+                        fetch(`/api/sts/result/${configHash}`)
+                            .then(response => {
+                                if (response.ok) {
+                                    return response.json();
+                                }
+                            })
+                            .then(result => {
+                                if (result) {
+                                    updateStsDisplay(result);
+                                }
+                            });
+                    }
                 });
 
             // STS Logic
