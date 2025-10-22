@@ -124,10 +124,6 @@ impl App {
 
     #[cfg_attr(test, allow(dead_code))]
     fn publish_ws_state_update(&mut self) {
-        if self.last_ws_update.elapsed() < Duration::from_millis(500) {
-            return;
-        }
-
         let state = self.get_websocket_state();
         EVENT_BROKER.publish(Event::WebsocketStateUpdate(state));
 

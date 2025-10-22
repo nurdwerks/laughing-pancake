@@ -147,7 +147,7 @@ pub struct EventBroker {
 
 impl EventBroker {
     pub fn new() -> Self {
-        let (sender, _) = broadcast::channel(100);
+        let (sender, _) = broadcast::channel(1024);
         Self { sender }
     }
 
