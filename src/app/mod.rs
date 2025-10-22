@@ -215,18 +215,27 @@ impl App {
                     self.should_quit = true;
                 }
                 Event::ForceQuit => {
-                    std::process::exit(0);
+                    *self.evolution_should_quit.lock().unwrap() = true;
+                    self.should_quit = true;
                 }
                 Event::ResetSimulation => {
                     *self.evolution_should_quit.lock().unwrap() = true;
                     if let Some(handle) = self.evolution_thread_handle.take() {
                         handle.join().unwrap();
                     }
+
+                    println!("Deleting evolution directory...");
                     if let Err(e) = std::fs::remove_dir_all("evolution") {
                         self.error_message = Some(format!("Failed to delete evolution directory: {e}"));
+                    } else {
+                        println!("Evolution directory deleted.");
                     }
+
+                    println!("Deleting sts_results directory...");
                     if let Err(e) = std::fs::remove_dir_all("sts_results") {
                         self.error_message = Some(format!("Failed to delete sts_results directory: {e}"));
+                    } else {
+                        println!("sts_results directory deleted.");
                     }
                     std::process::exit(0);
                 }

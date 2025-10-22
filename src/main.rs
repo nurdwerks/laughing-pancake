@@ -28,10 +28,14 @@ struct Args {
 #[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use crate::app::App;
+    use crate::{
+        app::App,
+        event::{Event, EVENT_BROKER},
+    };
     use std::panic;
     use std::process;
     use std::thread;
+    use tokio::signal;
 
     let _worker_pool = worker::WorkerPool::new();
     let _args = Args::parse();
@@ -50,6 +54,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = actix_rt::System::new().block_on(server::start_server()) {
             eprintln!("Server error: {e}");
         }
+    });
+
+    tokio::spawn(async move {
+        signal::ctrl_c().await.unwrap();
+        EVENT_BROKER.publish(Event::ForceQuit);
     });
 
     panic::set_hook(Box::new(|info| {
