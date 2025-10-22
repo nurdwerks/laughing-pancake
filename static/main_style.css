@@ -259,3 +259,11 @@ button:hover {
     justify-content: flex-end;
     margin-top: 20px;
 }
+
+.current-status-container {
+    background-color: #44475a;
+    padding: 1em;
+    border-radius: 8px;
+    margin-bottom: 1em;
+    border: 1px solid #6272a4;
+}
