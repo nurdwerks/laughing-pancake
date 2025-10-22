@@ -20,6 +20,7 @@ use sysinfo::System;
 use tokio::sync::broadcast;
 
 #[derive(Clone, Default)]
+#[cfg_attr(test, allow(dead_code))]
 pub struct ActiveMatch {
     pub board: Option<Chess>,
     pub white_player: String,
@@ -31,6 +32,7 @@ pub struct ActiveMatch {
 
 use sysinfo::{Components};
 
+#[cfg_attr(test, allow(dead_code))]
 pub struct App {
     should_quit: bool,
     pub error_message: Option<String>,
@@ -58,6 +60,7 @@ pub struct App {
 }
 
 impl App {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn new(git_hash: String) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
@@ -89,6 +92,7 @@ impl App {
         }
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     pub async fn run_tui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         self.start_evolution();
         while !self.should_quit {
@@ -106,6 +110,7 @@ impl App {
         Ok(())
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     pub async fn run_headless(&mut self) -> io::Result<()> {
         self.start_evolution();
         while !self.should_quit {
@@ -124,6 +129,7 @@ impl App {
         Ok(())
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn update_system_stats(&mut self) {
         self.system.refresh_cpu_all();
         self.system.refresh_memory();
@@ -133,6 +139,7 @@ impl App {
         self.total_memory = self.system.total_memory();
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn publish_ws_state_update(&mut self) {
         if self.last_ws_update.elapsed() < Duration::from_millis(500) {
             return;
@@ -144,6 +151,7 @@ impl App {
         self.last_ws_update = Instant::now();
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn handle_tui_events(&mut self) -> io::Result<()> {
         if event::poll(Duration::from_millis(50))? {
             if let crossterm::event::Event::Key(key) = event::read()? {
@@ -170,6 +178,7 @@ impl App {
         Ok(())
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     async fn handle_app_events(&mut self) -> io::Result<()> {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
@@ -266,6 +275,7 @@ impl App {
         Ok(())
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn start_evolution(&mut self) {
         let evolution_manager = ga::EvolutionManager::new(
             self.evolution_should_quit.clone(),
@@ -277,6 +287,7 @@ impl App {
         self.evolution_thread_handle = Some(handle);
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn log_message(&mut self, message: String) {
         // Publish to web clients
         EVENT_BROKER.publish(Event::LogUpdate(message.clone()));
@@ -286,6 +297,7 @@ impl App {
         self.autoscroll_log();
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn autoscroll_log(&mut self) {
         let log_len = self.evolution_log.len();
         if log_len > 100 { // Keep the log at a max of 100 entries
@@ -295,6 +307,7 @@ impl App {
         self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 
+    #[cfg_attr(test, allow(dead_code))]
     fn get_websocket_state(&self) -> WebsocketState {
         WebsocketState {
             git_hash: self.git_hash.clone(),
@@ -339,6 +352,7 @@ impl App {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn extract_player_number(name: &str) -> &str {
     if let Some(pos) = name.rfind(|c: char| !c.is_ascii_digit()) {
         &name[pos + 1..]

@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(dead_code))]
+
 use crate::game::search::{MoveTreeNode, SearchConfig};
 use crate::game::search::evaluation_cache::EvaluationCache;
 use crate::game::search::{PvsSearcher, Searcher};

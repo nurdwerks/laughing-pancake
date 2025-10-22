@@ -11,6 +11,7 @@ use crate::app::App;
 use ratatui::widgets::{Gauge, Wrap};
 
 
+#[cfg_attr(test, allow(dead_code))]
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -26,6 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_bottom_container(frame, app, main_layout[2]);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
     let active_matches: Vec<_> = app.active_matches.iter().filter(|(_, m)| m.board.is_some()).collect();
 
@@ -45,6 +47,7 @@ fn draw_matches_container(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_match_pane(frame: &mut Frame, area: Rect, match_id: &usize, match_state: &crate::app::ActiveMatch) {
     let match_pane = Block::default().borders(Borders::ALL).title(format!(
         "M {}: {} vs {}",
@@ -77,6 +80,7 @@ fn draw_match_pane(frame: &mut Frame, area: Rect, match_id: &usize, match_state:
     frame.render_widget(san_widget, inner_layout[1]);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_bottom_container(frame: &mut Frame, app: &mut App, area: Rect) {
     let bottom_layout = Layout::default()
         .direction(Direction::Horizontal)
@@ -101,6 +105,7 @@ fn draw_bottom_container(frame: &mut Frame, app: &mut App, area: Rect) {
     draw_system_stats_pane(frame, app, bottom_layout[2]);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let status_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -152,6 +157,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(mem_gauge, status_chunks[2]);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
     // Component Temperatures
     let temp_text: Vec<Line> = app
@@ -168,12 +174,14 @@ fn draw_system_stats_pane(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(temp_paragraph, area);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_worker_list(frame: &mut Frame, _app: &App, area: Rect) {
     let workers_block = Block::default().borders(Borders::ALL).title("Worker Status");
     let list = List::new([ListItem::new("Status now handled by Web UI.")]);
     frame.render_widget(list.block(workers_block), area);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, title: &str) {
     let board = chess.board();
     let mut board_text = Text::default();
@@ -228,6 +236,7 @@ fn draw_board(frame: &mut Frame, area: Rect, chess: &shakmaty::Chess, title: &st
     frame.render_widget(board_widget, area);
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn get_piece_symbol(piece: Option<Piece>) -> &'static str {
     match piece {
         Some(Piece {

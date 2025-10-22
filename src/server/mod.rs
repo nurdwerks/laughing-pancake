@@ -3,7 +3,7 @@
 use crate::event::{Event, WsMessage, EVENT_BROKER};
 use crate::ga::{Generation, Individual, Match};
 use crate::sts::{StsResult, StsRunner};
-use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, StreamHandler};
+use actix::{Actor, AsyncContext, Handler, Message, StreamHandler};
 use actix_files as fs;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_actors::ws;
@@ -273,10 +273,7 @@ impl Actor for MyWs {
             while let Ok(event) = rx.recv().await {
                 if matches!(
                     event,
-                    Event::WebsocketStateUpdate(_)
-                        | Event::LogUpdate(_)
-                        | Event::StsUpdate(_)
-                        | Event::StsStarted(_)
+                    Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_)
                 ) {
                     addr.do_send(event);
                 }
@@ -316,7 +313,6 @@ impl Handler<Event> for MyWs {
                     None
                 }
             }
-            Event::StsStarted(res) => Some(WsMessage::StsStarted(res)),
             _ => None,
         };
 

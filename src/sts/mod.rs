@@ -3,7 +3,6 @@
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
 use crate::game::search::SearchConfig;
 use crate::worker::{push_job, Job};
-use crossbeam_channel;
 use lazy_static::lazy_static;
 use shakmaty::Chess;
 use std::collections::{hash_map::DefaultHasher, HashSet};

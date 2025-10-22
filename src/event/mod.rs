@@ -1,5 +1,7 @@
 // src/event/mod.rs
 
+#![cfg_attr(test, allow(dead_code))]
+
 use actix::Message;
 use once_cell::sync::Lazy;
 use serde::Serialize;
