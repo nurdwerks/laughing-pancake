@@ -32,6 +32,7 @@ pub struct ActiveMatch {
 }
 
 use sysinfo::{Components};
+use std::hash::{Hash, Hasher};
 
 #[cfg_attr(test, allow(dead_code))]
 pub struct App {
@@ -55,6 +56,7 @@ pub struct App {
     match_id_counter: Arc<Mutex<usize>>,
     selection_algorithm: SelectionAlgorithm,
     sts_leaderboard: Vec<StsLeaderboardEntry>,
+    sts_hash_to_id_map: HashMap<u64, usize>,
     // Websocket state
     last_ws_update: Instant,
     git_hash: String,
@@ -87,6 +89,7 @@ impl App {
             match_id_counter: Arc::new(Mutex::new(0)),
             selection_algorithm: SelectionAlgorithm::SwissTournament,
             sts_leaderboard: Vec::new(),
+            sts_hash_to_id_map: HashMap::new(),
             // Websocket state
             last_ws_update: Instant::now(),
             git_hash,
@@ -134,19 +137,15 @@ impl App {
     async fn handle_app_events(&mut self) -> io::Result<()> {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
-                Event::StsModeActive(algo) => {
+                Event::StsModeActive(algo, population) => {
                     self.selection_algorithm = algo;
                     self.sts_leaderboard.clear();
-                }
-                Event::StsProgress(entry) => {
-                    if let Some(existing_entry) = self
-                        .sts_leaderboard
-                        .iter_mut()
-                        .find(|e| e.individual_id == entry.individual_id)
-                    {
-                        *existing_entry = entry;
-                    } else {
-                        self.sts_leaderboard.push(entry);
+                    self.sts_hash_to_id_map.clear();
+                    for individual in population.individuals {
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        individual.config.hash(&mut hasher);
+                        let hash = hasher.finish();
+                        self.sts_hash_to_id_map.insert(hash, individual.id);
                     }
                 }
                 Event::TournamentStart(round, total_matches, skipped_matches) => {
@@ -235,10 +234,26 @@ impl App {
                     }
                     std::process::exit(0);
                 }
-                Event::WebsocketStateUpdate(_)
-                | Event::LogUpdate(_)
-                | Event::StsUpdate(_) => {
+                Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) => {
                     // Ignore, this event is for the web client
+                }
+                Event::StsUpdate(update) => {
+                    if let Some(individual_id) = self.sts_hash_to_id_map.get(&update.config_hash) {
+                        let entry = StsLeaderboardEntry {
+                            individual_id: *individual_id,
+                            progress: update.progress,
+                            elo: update.elo,
+                        };
+                        if let Some(existing_entry) = self
+                            .sts_leaderboard
+                            .iter_mut()
+                            .find(|e| e.individual_id == *individual_id)
+                        {
+                            *existing_entry = entry;
+                        } else {
+                            self.sts_leaderboard.push(entry);
+                        }
+                    }
                 }
             }
         }

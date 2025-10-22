@@ -13,7 +13,7 @@ use shakmaty::san::SanPlus;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE, ENABLE_MOVE_LIMIT};
-use crate::event::{Event, MatchResult, EVENT_BROKER, SelectionAlgorithm, StsLeaderboardEntry};
+use crate::event::{Event, MatchResult, EVENT_BROKER, SelectionAlgorithm};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::sts::{StsResult, StsRunner};
 use crate::worker::{push_job, Job};
@@ -282,7 +282,10 @@ impl EvolutionManager {
         let config = load_or_create_generation_config(generation.generation_index);
 
         // Publish an event indicating the current selection mode
-        EVENT_BROKER.publish(Event::StsModeActive(config.selection_algorithm.clone()));
+		EVENT_BROKER.publish(Event::StsModeActive(
+            config.selection_algorithm.clone(),
+            generation.population.clone(),
+        ));
 
         match config.selection_algorithm {
             SelectionAlgorithm::SwissTournament => {
@@ -600,13 +603,6 @@ impl EvolutionManager {
 
         let mut results = Vec::new();
         while let Some((individual_id, result)) = rx.recv().await {
-            let progress = result.completed_positions as f64 / result.total_positions as f64;
-            EVENT_BROKER.publish(Event::StsProgress(StsLeaderboardEntry {
-                individual_id,
-                progress,
-                elo: result.elo,
-            }));
-
             results.push(result);
 
             self.send_status(format!(

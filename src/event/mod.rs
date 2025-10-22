@@ -104,14 +104,15 @@ pub struct StsUpdate {
 }
 
 /// Defines all possible events that can occur in the application.
+use crate::ga::Population;
+
 #[derive(Clone, Debug, Message)]
 #[rtype(result = "()")]
 pub enum Event {
     WebsocketStateUpdate(WebsocketState),
     StsUpdate(StsUpdate),
     // Events used by the TUI and backend logic
-    StsModeActive(SelectionAlgorithm),
-    StsProgress(StsLeaderboardEntry),
+    StsModeActive(SelectionAlgorithm, Population),
     TournamentStart(usize, usize, usize),
     GenerationStarted(u32),
     GenerationComplete(GenerationStats),
