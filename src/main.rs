@@ -11,11 +11,6 @@ mod sts;
 mod worker;
 
 use clap::Parser;
-use crate::app::App;
-use std::error::Error;
-use std::thread;
-use ratatui::{Terminal, prelude::CrosstermBackend};
-use crossterm::{execute, terminal::{disable_raw_mode, LeaveAlternateScreen}, event::DisableMouseCapture};
 
 
 #[derive(Parser, Debug)]
@@ -36,7 +31,18 @@ struct Args {
 
 #[cfg(not(test))]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::app::App;
+    use crossterm::{
+        event::DisableMouseCapture,
+        execute,
+        terminal::{disable_raw_mode, LeaveAlternateScreen},
+    };
+    use ratatui::{prelude::CrosstermBackend, Terminal};
+    use std::panic;
+    use std::process;
+    use std::thread;
+
     let _worker_pool = worker::WorkerPool::new();
     let args = Args::parse();
 

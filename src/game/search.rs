@@ -64,6 +64,7 @@ pub struct SearchConfig {
 }
 
 impl SearchConfig {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn default_with_randomization(rng: &mut impl rand::Rng) -> Self {
         let mut config = Self::default();
         let default_config = Self::default(); // for reference values
@@ -169,7 +170,6 @@ impl Default for SearchConfig {
 }
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct MoveTreeNode {
@@ -178,6 +178,7 @@ pub struct MoveTreeNode {
     pub children: Vec<MoveTreeNode>,
 }
 
+#[cfg_attr(test, allow(dead_code))]
 pub trait Searcher: Send {
     fn search(
         &mut self,
@@ -239,6 +240,7 @@ struct PvsRootSearchArgs<'a> {
 }
 
 impl PvsSearcher {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn with_shared_cache(cache: Arc<Mutex<EvaluationCache>>) -> Self {
         Self {
             history_table: [[0; 64]; 12],

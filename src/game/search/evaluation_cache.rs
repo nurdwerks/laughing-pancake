@@ -37,6 +37,7 @@ pub struct EvaluationCache {
 }
 
 impl EvaluationCache {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn new() -> Self {
         Self {
             table: HashMap::new(),
