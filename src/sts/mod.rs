@@ -59,7 +59,7 @@ impl StsRunner {
         self.config_hash
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Option<StsResult> {
         {
             let mut running_tests = RUNNING_STS_TESTS.lock().unwrap();
             if running_tests.contains(&self.config_hash) {
@@ -67,7 +67,7 @@ impl StsRunner {
                     "STS run for config hash {} is already in progress.",
                     self.config_hash
                 );
-                return;
+                return None;
             }
             running_tests.insert(self.config_hash);
         }
@@ -92,7 +92,7 @@ impl StsRunner {
             Ok(files) => files,
             Err(e) => {
                 eprintln!("Error getting EPD files: {e}");
-                return;
+                return None;
             }
         };
 
@@ -110,7 +110,7 @@ impl StsRunner {
         let config_hash = self.config_hash;
 
         // This task will manage the entire STS run, distributing jobs to the worker pool.
-        task::spawn(async move {
+        let handle = task::spawn(async move {
             let (result_tx, result_rx) = crossbeam_channel::unbounded();
 
             // Enqueue a job for each position that hasn't been completed yet.
@@ -165,12 +165,20 @@ impl StsRunner {
             }));
 
             let json = serde_json::to_string_pretty(&result).unwrap();
-            fs::write(result_path, json).expect("Failed to save final STS result");
+            fs::write(&result_path, json).expect("Failed to save final STS result");
 
             println!("STS run completed for config hash: {}", result.config_hash);
-            RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
-            println!("Released STS lock for config hash: {config_hash}");
+
+            result
         });
+
+        let final_result = handle.await.ok();
+
+        // Release the lock after the task is complete
+        RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
+        println!("Released STS lock for config hash: {config_hash}");
+
+        final_result
     }
 }
 
