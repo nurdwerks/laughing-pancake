@@ -17,9 +17,7 @@ use crate::event::{Event, MatchResult, EVENT_BROKER, SelectionAlgorithm, StsLead
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::sts::{StsResult, StsRunner};
 use crate::worker::{push_job, Job};
-use crossbeam_channel::Receiver;
-use tokio::sync::{oneshot, Semaphore};
-use num_cpus;
+use tokio::sync::{mpsc, oneshot, Semaphore};
 
 const EVOLUTION_DIR: &str = "evolution";
 
@@ -103,7 +101,7 @@ impl CacheManager {
 
         CacheGuard {
             config: config.clone(),
-            cache: cache.clone(),
+            _cache: cache.clone(),
             cache_manager: self.clone(),
         }
     }
@@ -137,7 +135,7 @@ impl Clone for CacheManager {
 /// When this guard is dropped, it notifies the `CacheManager` to decrement the usage count.
 struct CacheGuard {
     config: SearchConfig,
-    cache: Arc<Mutex<EvaluationCache>>,
+    _cache: Arc<Mutex<EvaluationCache>>,
     cache_manager: CacheManager,
 }
 
@@ -572,8 +570,7 @@ impl EvolutionManager {
 
     /// Runs STS tests for the entire population and waits for all to complete.
     async fn run_sts_for_population(&self, population: &Population) -> Result<Vec<StsResult>, ()> {
-        let (tx, rx): (crossbeam_channel::Sender<(usize, StsResult)>, Receiver<(usize, StsResult)>) =
-            crossbeam_channel::unbounded();
+        let (tx, mut rx) = mpsc::channel(population.individuals.len());
         let total_tasks = population.individuals.len();
 
         for individual in &population.individuals {
@@ -593,14 +590,16 @@ impl EvolutionManager {
                             * 100.0
                             - 242.85,
                     );
-                    tx_clone.send((individual_id, result)).unwrap();
+                    if tx_clone.send((individual_id, result)).await.is_err() {
+                        // Log error if the receiver is dropped
+                    }
                 }
             });
         }
         drop(tx); // Drop the original sender
 
         let mut results = Vec::new();
-        for (individual_id, result) in rx {
+        while let Some((individual_id, result)) = rx.recv().await {
             let progress = result.completed_positions as f64 / result.total_positions as f64;
             EVENT_BROKER.publish(Event::StsProgress(StsLeaderboardEntry {
                 individual_id,
@@ -1647,7 +1646,7 @@ mod tests {
                 config_hash,
                 config,
                 completed_positions: 100,
-                correct_moves: (i * 2) as usize, // Make the score proportional to the ID
+                correct_moves: (i * 2), // Make the score proportional to the ID
                 total_positions: 100,
                 elo: Some(1000.0 + (i as f64 * 10.0)),
             });

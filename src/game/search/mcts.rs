@@ -113,7 +113,7 @@ impl MctsSearcher {
                 sim_depth += 1;
             }
 
-            let eval_score = evaluation::evaluate(&sim_pos, &config);
+            let eval_score = evaluation::evaluate(&sim_pos, config);
             let win_prob = 1.0 / (1.0 + (-(eval_score as f64) / 400.0).exp());
 
             // Backpropagation

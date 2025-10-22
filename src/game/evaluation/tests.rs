@@ -307,10 +307,12 @@ fn test_opponent_weakness() {
 #[test]
 fn test_contempt_factor_applied() {
     let pos = Chess::default(); // Nearly equal position
-    let mut config = SearchConfig::default();
-    config.contempt_factor = 20;
-    config.draw_avoidance_margin = 50;
-    config.tempo_bonus_weight = 10;
+    let config = SearchConfig {
+        contempt_factor: 20,
+        draw_avoidance_margin: 50,
+        tempo_bonus_weight: 10,
+        ..Default::default()
+    };
 
     // Get a base score without the contempt factor to isolate its effect
     let base_score = {
@@ -333,9 +335,11 @@ fn test_contempt_factor_applied() {
 fn test_contempt_factor_not_applied() {
     let fen: Fen = "4k3/8/8/8/8/8/8/4K2Q w - - 0 1".parse().unwrap(); // White has a massive advantage
     let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
-    let mut config = SearchConfig::default();
-    config.contempt_factor = 20;
-    config.draw_avoidance_margin = 50;
+    let config = SearchConfig {
+        contempt_factor: 20,
+        draw_avoidance_margin: 50,
+        ..Default::default()
+    };
 
     let score = evaluate(&pos, &config);
 
