@@ -592,7 +592,7 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
         EVENT_BROKER.publish(Event::TournamentStart(round as usize, total_matches, skipped_matches));
 
         let mut match_tasks = Vec::new();
-        let max_concurrent_matches = (num_cpus::get() / 2).max(1);
+        let max_concurrent_matches = num_cpus::get().max(1);
         let semaphore = Arc::new(Semaphore::new(max_concurrent_matches));
 
         for mut game_match in pending_matches {
