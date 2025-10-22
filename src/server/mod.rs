@@ -1,7 +1,8 @@
 // src/server/mod.rs
 
 use crate::event::{Event, WsMessage, EVENT_BROKER};
-use crate::ga::{Generation, Individual, Match};
+use crate::ga::{Generation, Match};
+use crate::game::search::SearchConfig;
 use crate::sts::{StsResult, StsRunner};
 use actix::{Actor, AsyncContext, Handler, Message, StreamHandler};
 use actix_files as fs;
@@ -26,8 +27,16 @@ struct GenerationSummary {
 }
 
 #[derive(Serialize)]
+struct ApiIndividual {
+    id: usize,
+    config: SearchConfig,
+    elo: f64,
+    config_hash: u64,
+}
+
+#[derive(Serialize)]
 struct IndividualDetails {
-    individual: Individual,
+    individual: ApiIndividual,
     matches: Vec<Match>,
 }
 
@@ -96,8 +105,16 @@ async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
                     .individuals
                     .iter()
                     .find(|i| i.id == ind_id as usize)
-                    .cloned()
                 {
+                    let config_hash = StsRunner::new(individual.config.clone()).config_hash();
+
+                    let api_individual = ApiIndividual {
+                        id: individual.id,
+                        config: individual.config.clone(),
+                        elo: individual.elo,
+                        config_hash,
+                    };
+
                     let individual_name = format!("individual_{ind_id}.json");
                     let matches = gen
                         .matches
@@ -108,7 +125,10 @@ async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
                         })
                         .collect();
 
-                    HttpResponse::Ok().json(IndividualDetails { individual, matches })
+                    HttpResponse::Ok().json(IndividualDetails {
+                        individual: api_individual,
+                        matches,
+                    })
                 } else {
                     HttpResponse::NotFound().body(format!(
                         "Individual {ind_id} not found in generation {gen_id}"

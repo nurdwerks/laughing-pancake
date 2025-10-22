@@ -16,6 +16,7 @@ use crate::event::{Event, MatchResult, EVENT_BROKER};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::worker::{push_job, Job};
 use tokio::sync::{oneshot, Semaphore};
+use num_cpus;
 
 const EVOLUTION_DIR: &str = "evolution";
 
@@ -591,7 +592,8 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
         EVENT_BROKER.publish(Event::TournamentStart(round as usize, total_matches, skipped_matches));
 
         let mut match_tasks = Vec::new();
-        let semaphore = Arc::new(Semaphore::new(3));
+        let max_concurrent_matches = (num_cpus::get() / 2).max(1);
+        let semaphore = Arc::new(Semaphore::new(max_concurrent_matches));
 
         for mut game_match in pending_matches {
             if *self.should_quit.lock().unwrap() {
