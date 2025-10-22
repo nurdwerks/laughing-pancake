@@ -2,7 +2,10 @@
 
 use crate::{
     constants::NUM_ROUNDS,
-    event::{ActiveMatchState, ComponentState, Event, WebsocketState, EVENT_BROKER},
+    event::{
+        ActiveMatchState, ComponentState, Event, SelectionAlgorithm, StsLeaderboardEntry,
+        WebsocketState, EVENT_BROKER,
+    },
     ga,
     worker,
 };
@@ -50,6 +53,8 @@ pub struct App {
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     evolution_should_quit: Arc<Mutex<bool>>,
     match_id_counter: Arc<Mutex<usize>>,
+    selection_algorithm: SelectionAlgorithm,
+    sts_leaderboard: Vec<StsLeaderboardEntry>,
     // Websocket state
     last_ws_update: Instant,
     git_hash: String,
@@ -80,6 +85,8 @@ impl App {
             evolution_thread_handle: None,
             evolution_should_quit: Arc::new(Mutex::new(false)),
             match_id_counter: Arc::new(Mutex::new(0)),
+            selection_algorithm: SelectionAlgorithm::SwissTournament,
+            sts_leaderboard: Vec::new(),
             // Websocket state
             last_ws_update: Instant::now(),
             git_hash,
@@ -131,6 +138,21 @@ impl App {
     async fn handle_app_events(&mut self) -> io::Result<()> {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
+                Event::StsModeActive(algo) => {
+                    self.selection_algorithm = algo;
+                    self.sts_leaderboard.clear();
+                }
+                Event::StsProgress(entry) => {
+                    if let Some(existing_entry) = self
+                        .sts_leaderboard
+                        .iter_mut()
+                        .find(|e| e.individual_id == entry.individual_id)
+                    {
+                        *existing_entry = entry;
+                    } else {
+                        self.sts_leaderboard.push(entry);
+                    }
+                }
                 Event::TournamentStart(round, total_matches, skipped_matches) => {
                     self.active_matches.clear();
                     self.evolution_current_round = round;
@@ -217,7 +239,10 @@ impl App {
                     }
                     std::process::exit(0);
                 }
-                Event::WebsocketStateUpdate(_) | Event::LogUpdate(_) | Event::StsUpdate(_) | Event::StsStarted(_) => {
+                Event::WebsocketStateUpdate(_)
+                | Event::LogUpdate(_)
+                | Event::StsUpdate(_)
+                | Event::StsStarted(_) => {
                     // Ignore, this event is for the web client
                 }
             }
@@ -278,6 +303,8 @@ impl App {
                 })
                 .collect(),
             worker_statuses: worker::WORKER_STATUSES.lock().unwrap().clone(),
+            selection_algorithm: self.selection_algorithm.clone(),
+            sts_leaderboard: self.sts_leaderboard.clone(),
         }
     }
 }
