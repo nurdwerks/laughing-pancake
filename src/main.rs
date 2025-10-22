@@ -1,7 +1,6 @@
 
 
 mod app;
-mod ui;
 mod game;
 mod ga;
 mod event;
@@ -24,27 +23,18 @@ struct Args {
     #[arg(long)]
     opening_book: Option<String>,
 
-    /// Enable the Text-based User Interface (TUI)
-    #[arg(long)]
-    tui: bool,
 }
 
 #[cfg(not(test))]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use crate::app::App;
-    use crossterm::{
-        event::DisableMouseCapture,
-        execute,
-        terminal::{disable_raw_mode, LeaveAlternateScreen},
-    };
-    use ratatui::{prelude::CrosstermBackend, Terminal};
     use std::panic;
     use std::process;
     use std::thread;
 
     let _worker_pool = worker::WorkerPool::new();
-    let args = Args::parse();
+    let _args = Args::parse();
 
     // Get the git hash
     let git_hash = match process::Command::new("git")
@@ -71,32 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::new(git_hash);
 
-    if args.tui {
-        // TUI mode
-        let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
-        let res = app.run_tui(&mut terminal).await;
-
-        // Restore terminal
-        disable_raw_mode()?;
-        execute!(
-            terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )?;
-        terminal.show_cursor()?;
-
-        if let Err(err) = res {
-            println!("{err:?}");
-            process::exit(1);
-        }
-    } else {
-        // Headless mode
-        println!("Running in headless mode. Use --tui to show the interface.");
-        let res = app.run_headless().await;
-        if let Err(err) = res {
-            eprintln!("Headless mode error: {err:?}");
-            process::exit(1);
-        }
+    println!("Running in headless mode.");
+    let res = app.run_headless().await;
+    if let Err(err) = res {
+        eprintln!("Headless mode error: {err:?}");
+        process::exit(1);
     }
 
     if let Some(err) = app.error_message {

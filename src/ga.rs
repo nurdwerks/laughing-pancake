@@ -15,7 +15,7 @@ use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANC
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::worker::{push_job, Job};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Semaphore};
 
 const EVOLUTION_DIR: &str = "evolution";
 
@@ -591,6 +591,7 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
         EVENT_BROKER.publish(Event::TournamentStart(round as usize, total_matches, skipped_matches));
 
         let mut match_tasks = Vec::new();
+        let semaphore = Arc::new(Semaphore::new(3));
 
         for mut game_match in pending_matches {
             if *self.should_quit.lock().unwrap() {
@@ -606,6 +607,7 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
             let self_clone = self.clone();
             let generation_clone = generation.clone();
             let cache_manager_clone = cache_manager.clone();
+            let permit = semaphore.clone().acquire_owned().await.unwrap();
 
             let task = tokio::spawn(async move {
                 let (white_config, black_config) = {
@@ -667,6 +669,7 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
                     };
                     EVENT_BROKER.publish(Event::MatchCompleted(match_id, result_event));
                 }
+                drop(permit);
             });
             match_tasks.push(task);
         }

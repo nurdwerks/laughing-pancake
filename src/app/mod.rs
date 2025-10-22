@@ -3,11 +3,9 @@
 use crate::{
     constants::NUM_ROUNDS,
     event::{ActiveMatchState, ComponentState, Event, WebsocketState, EVENT_BROKER},
-    ga, ui,
+    ga,
     worker,
 };
-use crossterm::event::{self, KeyCode};
-use ratatui::{prelude::*, widgets::ListState, Terminal};
 use shakmaty::{fen::Fen, Chess};
 use std::{
     collections::HashMap,
@@ -44,8 +42,6 @@ pub struct App {
     pub total_memory: u64,
     // Evolution state
     event_subscriber: broadcast::Receiver<Event>,
-    pub evolution_log: Vec<String>,
-    pub evolution_log_state: ListState,
     pub evolution_current_generation: u32,
     pub evolution_current_round: usize,
     pub evolution_matches_completed: usize,
@@ -76,8 +72,6 @@ impl App {
             total_memory: 0,
             // Evolution state
             event_subscriber: EVENT_BROKER.subscribe(),
-            evolution_log: Vec::new(),
-            evolution_log_state: ListState::default(),
             evolution_current_generation: 0,
             evolution_current_round: 0,
             evolution_matches_completed: 0,
@@ -90,24 +84,6 @@ impl App {
             last_ws_update: Instant::now(),
             git_hash,
         }
-    }
-
-    #[cfg_attr(test, allow(dead_code))]
-    pub async fn run_tui<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
-        self.start_evolution();
-        while !self.should_quit {
-            self.update_system_stats();
-            self.publish_ws_state_update();
-            terminal.draw(|f| ui::draw(f, self))?;
-            self.handle_tui_events().await?;
-            self.handle_app_events().await?;
-        }
-
-        if let Some(handle) = self.evolution_thread_handle.take() {
-            handle.join().unwrap();
-        }
-
-        Ok(())
     }
 
     #[cfg_attr(test, allow(dead_code))]
@@ -152,33 +128,6 @@ impl App {
     }
 
     #[cfg_attr(test, allow(dead_code))]
-    async fn handle_tui_events(&mut self) -> io::Result<()> {
-        if event::poll(Duration::from_millis(50))? {
-            if let crossterm::event::Event::Key(key) = event::read()? {
-                if key.kind == event::KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') => {
-                            self.should_quit = true;
-                        }
-                        KeyCode::Up => {
-                            let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_sub(1);
-                            self.evolution_log_state.select(Some(new_selection));
-                        }
-                        KeyCode::Down => {
-                            if !self.evolution_log.is_empty() {
-                                let new_selection = self.evolution_log_state.selected().unwrap_or(0).saturating_add(1).min(self.evolution_log.len() - 1);
-                                self.evolution_log_state.select(Some(new_selection));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg_attr(test, allow(dead_code))]
     async fn handle_app_events(&mut self) -> io::Result<()> {
         while let Ok(update) = self.event_subscriber.try_recv() {
             match update {
@@ -207,7 +156,7 @@ impl App {
                         stats.average_elo,
                         stats.lowest_elo
                     );
-                    self.log_message(log_message);
+                    EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::MatchStarted(match_id, white_player, black_player) => {
                     let match_state = ActiveMatch {
@@ -227,10 +176,11 @@ impl App {
                     let white_num = extract_player_number(&white_name);
                     let black_num = extract_player_number(&black_name);
 
-                    self.log_message(format!(
+                    let log_message = format!(
                         "M {}: {} vs {} ({})",
                         match_id, white_num, black_num, result.result
-                    ));
+                    );
+                    EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
@@ -245,7 +195,7 @@ impl App {
                     }
                 }
                 Event::StatusUpdate(message) => {
-                    self.log_message(message);
+                    EVENT_BROKER.publish(Event::LogUpdate(message));
                 }
                 Event::Panic(msg) => {
                     self.error_message = Some(format!("Evolution thread panicked: {msg}"));
@@ -285,26 +235,6 @@ impl App {
             evolution_manager.run();
         });
         self.evolution_thread_handle = Some(handle);
-    }
-
-    #[cfg_attr(test, allow(dead_code))]
-    fn log_message(&mut self, message: String) {
-        // Publish to web clients
-        EVENT_BROKER.publish(Event::LogUpdate(message.clone()));
-
-        // Also add to the TUI log
-        self.evolution_log.push(message);
-        self.autoscroll_log();
-    }
-
-    #[cfg_attr(test, allow(dead_code))]
-    fn autoscroll_log(&mut self) {
-        let log_len = self.evolution_log.len();
-        if log_len > 100 { // Keep the log at a max of 100 entries
-            self.evolution_log.drain(0..log_len - 100);
-        }
-        // Autoscroll to the bottom of the log
-        self.evolution_log_state.select(Some(self.evolution_log.len().saturating_sub(1)));
     }
 
     #[cfg_attr(test, allow(dead_code))]
