@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::{fs, io};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tokio::task;
 
 lazy_static! {
@@ -111,7 +112,7 @@ impl StsRunner {
 
         // This task will manage the entire STS run, distributing jobs to the worker pool.
         let handle = task::spawn(async move {
-            let (result_tx, result_rx) = crossbeam_channel::unbounded();
+            let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
             // Enqueue a job for each position that hasn't been completed yet.
             for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
@@ -129,8 +130,8 @@ impl StsRunner {
             // Drop the original sender so the receiver knows when all jobs are done.
             drop(result_tx);
 
-            // This loop collects results from the worker pool.
-            for is_correct in result_rx {
+            // This loop collects results from the worker pool asynchronously.
+            while let Some(is_correct) = result_rx.recv().await {
                 if is_correct {
                     result.correct_moves += 1;
                 }
