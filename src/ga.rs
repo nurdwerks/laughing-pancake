@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use rand::Rng;
@@ -14,11 +15,67 @@ use serde::{Deserialize, Serialize};
 use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANCE, ENABLE_MOVE_LIMIT};
 use crate::event::{Event, MatchResult, EVENT_BROKER};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
+use crate::sts::{StsResult, StsRunner};
 use crate::worker::{push_job, Job};
+use crossbeam_channel::Receiver;
 use tokio::sync::{oneshot, Semaphore};
 use num_cpus;
 
 const EVOLUTION_DIR: &str = "evolution";
+
+/// Loads the configuration for the upcoming generation, or creates a new one,
+/// rotating the selection algorithm.
+fn load_or_create_generation_config(current_generation_index: u32) -> GenerationConfig {
+    let next_gen_index = current_generation_index + 1;
+    let config_path =
+        Path::new(EVOLUTION_DIR).join(format!("generation_{next_gen_index}_config.json"));
+
+    if config_path.exists() {
+        if let Ok(json) = fs::read_to_string(&config_path) {
+            if let Ok(config) = serde_json::from_str(&json) {
+                return config;
+            }
+        }
+    }
+
+    // If config doesn't exist, create it by rotating from the previous one.
+    let prev_config_path =
+        Path::new(EVOLUTION_DIR).join(format!("generation_{current_generation_index}_config.json"));
+    let prev_selection_algo = if prev_config_path.exists() {
+        fs::read_to_string(prev_config_path)
+            .ok()
+            .and_then(|json| serde_json::from_str::<GenerationConfig>(&json).ok())
+            .map(|config| config.selection_algorithm)
+            .unwrap_or(SelectionAlgorithm::SwissTournament) // Default for gen 0
+    } else {
+        SelectionAlgorithm::SwissTournament
+    };
+
+    let next_selection_algo = match prev_selection_algo {
+        SelectionAlgorithm::SwissTournament => SelectionAlgorithm::StsScore,
+        SelectionAlgorithm::StsScore => SelectionAlgorithm::SwissTournament,
+    };
+
+    let new_config = GenerationConfig {
+        selection_algorithm: next_selection_algo,
+    };
+
+    let json = serde_json::to_string_pretty(&new_config).unwrap();
+    fs::write(config_path, json).expect("Failed to write new generation config");
+
+    new_config
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SelectionAlgorithm {
+    SwissTournament,
+    StsScore,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GenerationConfig {
+    pub selection_algorithm: SelectionAlgorithm,
+}
 
 /// Manages evaluation caches for all players in the tournament.
 /// Caches are created on-demand and automatically destroyed when no longer in use.
@@ -176,7 +233,7 @@ impl EvolutionManager {
 
             let next_generation_dir = setup_directories(generation_index + 1);
             let final_generation = generation.clone();
-            self.evolve_population(&final_generation, &next_generation_dir)?;
+            self.evolve_population(&final_generation, &next_generation_dir).await?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
         }
@@ -225,8 +282,31 @@ impl EvolutionManager {
     }
 
     /// Takes a completed tournament population and evolves it to create the next generation.
-    fn evolve_population(&self, generation: &Generation, next_generation_dir: &Path) -> Result<(), ()> {
-        self.send_status("\nEvolving to the next generation...".to_string())?;
+    async fn evolve_population(
+        &self,
+        generation: &Generation,
+        next_generation_dir: &Path,
+    ) -> Result<(), ()> {
+        let config = load_or_create_generation_config(generation.generation_index);
+
+        match config.selection_algorithm {
+            SelectionAlgorithm::SwissTournament => {
+                self.evolve_population_swiss(generation, next_generation_dir)
+            }
+            SelectionAlgorithm::StsScore => {
+                self.evolve_population_sts(generation, next_generation_dir)
+                    .await
+            }
+        }
+    }
+
+    /// Evolves the population based on Swiss tournament results.
+    fn evolve_population_swiss(
+        &self,
+        generation: &Generation,
+        next_generation_dir: &Path,
+    ) -> Result<(), ()> {
+        self.send_status("\nEvolving to the next generation using Swiss Tournament results...".to_string())?;
         let mut rng = rand::thread_rng();
 
         // --- Stage 1: Determine survivors and create the initial pool for the next generation ---
@@ -327,11 +407,228 @@ impl EvolutionManager {
             }
         }
 
-        // --- Stage 2: Filter out clones, keeping the one with the highest ELO ---
+        self.finalize_and_save_population(next_generation_pool, next_generation_dir)
+    }
+
+    #[cfg(test)]
+    async fn evolve_population_sts_with_mock_results(
+        &self,
+        generation: &Generation,
+        next_generation_dir: &Path,
+        mut sts_results: Vec<StsResult>,
+    ) -> Result<(), ()> {
+        self.send_status("Starting STS-based evolution with mock results...".to_string())?;
+
+        // Sort individuals by their STS score (higher is better)
+        sts_results.sort_by(|a, b| {
+            let score_a = a.elo.unwrap_or(-1.0);
+            let score_b = b.elo.unwrap_or(-1.0);
+            score_b.partial_cmp(&score_a).unwrap()
+        });
+
+        // --- Stage 2: Select survivors ---
+        let num_survivors = (POPULATION_SIZE as f64 * 0.25).round() as usize;
+        let survivor_hashes: HashSet<u64> = sts_results
+            .iter()
+            .take(num_survivors)
+            .map(|r| r.config_hash)
+            .collect();
+
+        let survivors: Vec<Individual> = generation
+            .population
+            .individuals
+            .iter()
+            .filter(|i| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                i.config.hash(&mut hasher);
+                survivor_hashes.contains(&hasher.finish())
+            })
+            .cloned()
+            .collect();
+
+        self.send_status(format!(
+            "Top 25% ({num_survivors} individuals) selected as survivors based on STS score."
+        ))?;
+
+        // --- Stage 3: Create the next generation pool ---
+        let mut next_generation_pool: Vec<Individual> = survivors.clone();
+        let remaining_slots = POPULATION_SIZE.saturating_sub(survivors.len());
+
+        if !survivors.is_empty() {
+            self.send_status(format!("Breeding {remaining_slots} new offspring from survivors."))?;
+            let mut rng = rand::thread_rng();
+            for _ in 0..remaining_slots {
+                let parent1 = survivors.choose(&mut rng).unwrap();
+                let parent2 = survivors.choose(&mut rng).unwrap();
+
+                let mut child_config = if parent1.id == parent2.id {
+                    parent1.config.clone()
+                } else {
+                    crossover(&parent1.config, &parent2.config, &mut rng)
+                };
+                mutate(&mut child_config, &mut rng);
+
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: child_config,
+                    elo: STARTING_ELO,
+                });
+            }
+        } else {
+            // Fallback: If there are no survivors, fill with random individuals
+            self.send_status("No survivors from STS. Filling with random individuals.".to_string())?;
+            let mut rng = rand::thread_rng();
+            for _ in 0..POPULATION_SIZE {
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: SearchConfig::default_with_randomization(&mut rng),
+                    elo: STARTING_ELO,
+                });
+            }
+        }
+
+        self.finalize_and_save_population(next_generation_pool, next_generation_dir)
+    }
+
+    /// Evolves the population based on STS scores.
+    async fn evolve_population_sts(
+        &self,
+        generation: &Generation,
+        next_generation_dir: &Path,
+    ) -> Result<(), ()> {
+        self.send_status("Starting STS-based evolution...".to_string())?;
+
+        // --- Stage 1: Run STS for all individuals ---
+        let mut sts_results = self.run_sts_for_population(&generation.population).await?;
+        self.send_status(format!("Completed STS runs for {} individuals.", sts_results.len()))?;
+
+        // Sort individuals by their STS score (higher is better)
+        sts_results.sort_by(|a, b| {
+            let score_a = a.elo.unwrap_or(-1.0);
+            let score_b = b.elo.unwrap_or(-1.0);
+            score_b.partial_cmp(&score_a).unwrap()
+        });
+
+        // --- Stage 2: Select survivors ---
+        let num_survivors = (POPULATION_SIZE as f64 * 0.25).round() as usize;
+        let survivor_hashes: HashSet<u64> = sts_results
+            .iter()
+            .take(num_survivors)
+            .map(|r| r.config_hash)
+            .collect();
+
+        let survivors: Vec<Individual> = generation
+            .population
+            .individuals
+            .iter()
+            .filter(|i| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                i.config.hash(&mut hasher);
+                survivor_hashes.contains(&hasher.finish())
+            })
+            .cloned()
+            .collect();
+
+        self.send_status(format!(
+            "Top 25% ({num_survivors} individuals) selected as survivors based on STS score."
+        ))?;
+
+        // --- Stage 3: Create the next generation pool ---
+        let mut next_generation_pool: Vec<Individual> = survivors.clone();
+        let remaining_slots = POPULATION_SIZE.saturating_sub(survivors.len());
+
+        if !survivors.is_empty() {
+            self.send_status(format!("Breeding {remaining_slots} new offspring from survivors."))?;
+            let mut rng = rand::thread_rng();
+            for _ in 0..remaining_slots {
+                let parent1 = survivors.choose(&mut rng).unwrap();
+                let parent2 = survivors.choose(&mut rng).unwrap();
+
+                let mut child_config = if parent1.id == parent2.id {
+                    parent1.config.clone()
+                } else {
+                    crossover(&parent1.config, &parent2.config, &mut rng)
+                };
+                mutate(&mut child_config, &mut rng);
+
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: child_config,
+                    elo: STARTING_ELO,
+                });
+            }
+        } else {
+            // Fallback: If there are no survivors, fill with random individuals
+            self.send_status("No survivors from STS. Filling with random individuals.".to_string())?;
+            let mut rng = rand::thread_rng();
+            for _ in 0..POPULATION_SIZE {
+                next_generation_pool.push(Individual {
+                    id: 0, // Placeholder
+                    config: SearchConfig::default_with_randomization(&mut rng),
+                    elo: STARTING_ELO,
+                });
+            }
+        }
+
+        self.finalize_and_save_population(next_generation_pool, next_generation_dir)
+    }
+
+    /// Runs STS tests for the entire population and waits for all to complete.
+    async fn run_sts_for_population(&self, population: &Population) -> Result<Vec<StsResult>, ()> {
+        let (tx, rx): (crossbeam_channel::Sender<StsResult>, Receiver<StsResult>) = crossbeam_channel::unbounded();
+        let total_tasks = population.individuals.len();
+
+        for individual in &population.individuals {
+            let tx_clone = tx.clone();
+            let config = individual.config.clone();
+
+            tokio::spawn(async move {
+                let mut sts_runner = StsRunner::new(config);
+                // The run method now internally handles waiting for the result
+                // and returns the final StsResult.
+                if let Some(mut result) = sts_runner.run().await {
+                    // The STS ELO is a good metric for performance
+                    result.elo = Some(
+                        44.523
+                            * (result.correct_moves as f64 / result.total_positions as f64)
+                            * 100.0
+                            - 242.85,
+                    );
+                    tx_clone.send(result).unwrap();
+                }
+            });
+        }
+        drop(tx); // Drop the original sender
+
+        let mut results = Vec::new();
+        for result in rx {
+            results.push(result);
+            self.send_status(format!(
+                "STS run complete for hash {}. ({}/{})",
+                results.last().unwrap().config_hash,
+                results.len(),
+                total_tasks
+            ))?;
+        }
+
+        Ok(results)
+    }
+
+    /// Takes a pool of candidate individuals, filters out clones, ensures the population
+    /// reaches POPULATION_SIZE, assigns final IDs, and saves them to disk.
+    fn finalize_and_save_population(
+        &self,
+        next_generation_pool: Vec<Individual>,
+        next_generation_dir: &Path,
+    ) -> Result<(), ()> {
+        let mut rng = rand::thread_rng();
+
+        // --- Stage 1: Filter out clones, keeping the one with the highest ELO ---
         let initial_pool_size = next_generation_pool.len();
         let mut unique_individuals = HashMap::new();
         for individual in next_generation_pool {
-            unique_individuals.entry(individual.config.clone())
+            unique_individuals
+                .entry(individual.config.clone())
                 .and_modify(|existing: &mut Individual| {
                     if individual.elo > existing.elo {
                         *existing = individual.clone();
@@ -342,14 +639,20 @@ impl EvolutionManager {
 
         let mut next_generation: Vec<Individual> = unique_individuals.values().cloned().collect();
         let num_clones_removed = initial_pool_size - next_generation.len();
-        self.send_status(format!("Removed {num_clones_removed} clone(s) from the population."))?;
+        if num_clones_removed > 0 {
+            self.send_status(format!(
+                "Removed {num_clones_removed} clone(s) from the population."
+            ))?;
+        }
 
-        // --- Stage 3: Repopulate if necessary, ensuring new individuals are not clones ---
+        // --- Stage 2: Repopulate if necessary, ensuring new individuals are not clones ---
         while next_generation.len() < POPULATION_SIZE {
             let new_config = SearchConfig::default_with_randomization(&mut rng);
 
             // Ensure the new random config is not already in the unique set
-            if let std::collections::hash_map::Entry::Vacant(e) = unique_individuals.entry(new_config.clone()) {
+            if let std::collections::hash_map::Entry::Vacant(e) =
+                unique_individuals.entry(new_config.clone())
+            {
                 let new_individual = Individual {
                     id: 0, // Placeholder
                     config: new_config,
@@ -360,23 +663,31 @@ impl EvolutionManager {
             }
         }
 
-        // If we have too many, truncate the list. This could happen if the initial pool had
-        // more than POPULATION_SIZE unique individuals. We'll sort by ELO and take the top.
+        // --- Stage 3: Truncate if necessary ---
+        // This could happen if the initial pool had more than POPULATION_SIZE unique individuals.
         if next_generation.len() > POPULATION_SIZE {
-            next_generation.sort_by(|a, b| b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal));
+            next_generation.sort_by(|a, b| {
+                b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal)
+            });
             next_generation.truncate(POPULATION_SIZE);
-            self.send_status(format!("Population truncated to {POPULATION_SIZE} individuals based on ELO."))?;
+            self.send_status(format!(
+                "Population truncated to {POPULATION_SIZE} individuals based on ELO."
+            ))?;
         }
 
         // --- Stage 4: Finalize and save the new generation ---
         for (i, individual) in next_generation.iter_mut().enumerate() {
             individual.id = i;
             let individual_path = next_generation_dir.join(format!("individual_{i}.json"));
-            let json = serde_json::to_string_pretty(individual).expect("Failed to serialize individual");
+            let json =
+                serde_json::to_string_pretty(individual).expect("Failed to serialize individual");
             fs::write(individual_path, json).expect("Failed to write individual file");
         }
 
-        self.send_status(format!("Generated and saved {} unique individuals for the next generation.", next_generation.len()))?;
+        self.send_status(format!(
+            "Generated and saved {} unique individuals for the next generation.",
+            next_generation.len()
+        ))?;
         Ok(())
     }
 
@@ -1214,8 +1525,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_evolve_population_winner_scenario() {
+    #[tokio::test]
+    async fn test_evolve_population_winner_scenario() {
         let temp_dir = tempdir().unwrap();
         let next_gen_dir = temp_dir.path().join("generation_1");
         fs::create_dir(&next_gen_dir).unwrap();
@@ -1229,7 +1540,7 @@ mod tests {
         }
 
         let population = Population { individuals };
-        let mut generation = Generation {
+        let generation = Generation {
             generation_index: 0,
             round: NUM_ROUNDS,
             population,
@@ -1244,7 +1555,7 @@ mod tests {
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
-        evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
+        evolution_manager.evolve_population_swiss(&generation, &next_gen_dir).unwrap();
 
         // Check that the next generation was created
         assert!(next_gen_dir.join("individual_0.json").exists());
@@ -1257,8 +1568,8 @@ mod tests {
         assert_eq!(num_files, POPULATION_SIZE);
     }
 
-    #[test]
-    fn test_evolve_population_no_winner_scenario() {
+    #[tokio::test]
+    async fn test_evolve_population_no_winner_scenario() {
         let temp_dir = tempdir().unwrap();
         let next_gen_dir = temp_dir.path().join("generation_1");
         fs::create_dir(&next_gen_dir).unwrap();
@@ -1270,7 +1581,7 @@ mod tests {
         }
 
         let population = Population { individuals };
-        let mut generation = Generation {
+        let generation = Generation {
             generation_index: 0,
             round: NUM_ROUNDS,
             population,
@@ -1285,7 +1596,60 @@ mod tests {
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
-        evolution_manager.evolve_population(&mut generation, &next_gen_dir).unwrap();
+        evolution_manager.evolve_population_swiss(&generation, &next_gen_dir).unwrap();
+
+        // Check that the next generation was created
+        let next_gen_population = Population::load(&next_gen_dir);
+        assert_eq!(next_gen_population.individuals.len(), POPULATION_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_evolve_population_sts_scenario() {
+        let temp_dir = tempdir().unwrap();
+        let next_gen_dir = temp_dir.path().join("generation_1");
+        fs::create_dir(&next_gen_dir).unwrap();
+
+        let mut individuals = Vec::new();
+        for i in 0..POPULATION_SIZE {
+            individuals.push(create_mock_individual(i, 1200.0 + (i as f64 * 10.0)));
+        }
+
+        let population = Population { individuals };
+        let generation = Generation {
+            generation_index: 0,
+            round: NUM_ROUNDS,
+            population,
+            matches: vec![],
+            previous_matchups: HashSet::new(),
+            white_games_played: HashMap::new(),
+            black_games_played: HashMap::new(),
+            round_pairings: Vec::new(),
+            match_id_counter: 0,
+        };
+
+        let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
+
+        // Mock the STS results
+        let mut sts_results = vec![];
+        for i in 0..POPULATION_SIZE {
+            let config = generation.population.individuals[i].config.clone();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            config.hash(&mut hasher);
+            let config_hash = hasher.finish();
+            sts_results.push(StsResult {
+                config_hash,
+                config,
+                completed_positions: 100,
+                correct_moves: (i * 2) as usize, // Make the score proportional to the ID
+                total_positions: 100,
+                elo: Some(1000.0 + (i as f64 * 10.0)),
+            });
+        }
+
+        evolution_manager
+            .evolve_population_sts_with_mock_results(&generation, &next_gen_dir, sts_results)
+            .await
+            .unwrap();
 
         // Check that the next generation was created
         let next_gen_population = Population::load(&next_gen_dir);
