@@ -109,7 +109,6 @@ pub struct StsUpdate {
 pub enum Event {
     WebsocketStateUpdate(WebsocketState),
     StsUpdate(StsUpdate),
-    StsStarted(StsRunResponse),
     // Events used by the TUI and backend logic
     StsModeActive(SelectionAlgorithm),
     StsProgress(StsLeaderboardEntry),

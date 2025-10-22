@@ -5,7 +5,6 @@ use crate::game::search::evaluation_cache::EvaluationCache;
 use crate::game::search::{PvsSearcher, Searcher};
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
-use num_cpus;
 use serde::Serialize;
 use shakmaty::{san::San, Chess, Move};
 use std::sync::{Arc, Mutex};
@@ -57,15 +56,12 @@ pub fn push_job(job: Job) {
 }
 
 /// Manages a pool of worker threads that process jobs from the queue.
-pub struct WorkerPool {
-    workers: Vec<thread::JoinHandle<()>>,
-}
+pub struct WorkerPool;
 
 impl WorkerPool {
     /// Creates a new WorkerPool, spawning a worker thread for each logical CPU core.
     pub fn new() -> Self {
         let num_threads = num_cpus::get();
-        let mut workers = Vec::with_capacity(num_threads);
 
         {
             let mut statuses = WORKER_STATUSES.lock().unwrap();
@@ -77,12 +73,12 @@ impl WorkerPool {
         for id in 0..num_threads {
             let job_rx = JOB_QUEUE.1.clone();
 
-            let handle = thread::spawn(move || {
+            let _handle = thread::spawn(move || {
                 let mut searcher =
                     PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
 
                 while let Ok(job) = job_rx.recv() {
-                    let job_description = format!("{:?}", job);
+                    let job_description = format!("{job:?}");
 
                     {
                         let mut statuses = WORKER_STATUSES.lock().unwrap();
@@ -129,9 +125,10 @@ impl WorkerPool {
                 }
             });
 
-            workers.push(handle);
+            // The handle is intentionally detached here. The worker threads will run for the
+            // lifetime of the application.
         }
 
-        WorkerPool { workers }
+        WorkerPool
     }
 }

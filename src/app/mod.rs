@@ -237,8 +237,7 @@ impl App {
                 }
                 Event::WebsocketStateUpdate(_)
                 | Event::LogUpdate(_)
-                | Event::StsUpdate(_)
-                | Event::StsStarted(_) => {
+                | Event::StsUpdate(_) => {
                     // Ignore, this event is for the web client
                 }
             }
