@@ -1,14 +1,15 @@
 // src/sts/mod.rs
 
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
-use crate::game::search::evaluation_cache::EvaluationCache;
-use crate::game::search::{SearchConfig, PvsSearcher, Searcher};
+use crate::game::search::SearchConfig;
+use crate::worker::{push_job, Job};
+use crossbeam_channel;
 use lazy_static::lazy_static;
-use shakmaty::{san::San, Chess};
+use shakmaty::Chess;
 use std::collections::{hash_map::DefaultHasher, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::{fs, io};
 use serde::{Deserialize, Serialize};
 use tokio::task;
@@ -109,24 +110,31 @@ impl StsRunner {
         let mut result = self.result.clone();
         let config_hash = self.config_hash;
 
+        // This task will manage the entire STS run, distributing jobs to the worker pool.
         task::spawn(async move {
-            let inner_task = task::spawn(async move {
-                let mut searcher =
-                    PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
+            let (result_tx, result_rx) = crossbeam_channel::unbounded();
 
-                for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
+            // Enqueue a job for each position that hasn't been completed yet.
+            for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
                 if i < result.completed_positions {
                     continue; // Skip already completed positions
                 }
+                let job = Job::EvaluateStsPosition {
+                    pos,
+                    best_move_san,
+                    config: config.clone(),
+                    result_tx: result_tx.clone(),
+                };
+                push_job(job);
+            }
+            // Drop the original sender so the receiver knows when all jobs are done.
+            drop(result_tx);
 
-                let (best_move, _, _) = searcher.search(&pos, config.search_depth, &config, None, None);
-                if let Some(m) = best_move {
-                    let san = San::from_move(&pos, m);
-                    if san.to_string() == best_move_san {
-                        result.correct_moves += 1;
-                    }
+            // This loop collects results from the worker pool.
+            for is_correct in result_rx {
+                if is_correct {
+                    result.correct_moves += 1;
                 }
-
                 result.completed_positions += 1;
 
                 let progress = result.completed_positions as f64 / result.total_positions as f64;
@@ -138,12 +146,14 @@ impl StsRunner {
                     elo: None,
                 }));
 
-                if result.completed_positions % 10 == 0 { // Save progress every 10 positions
+                // Save progress every 10 positions
+                if result.completed_positions % 10 == 0 {
                     let json = serde_json::to_string_pretty(&result).unwrap();
-                    fs::write(&result_path, json).expect("Failed to save STS result");
+                    fs::write(&result_path, &json).expect("Failed to save STS result");
                 }
             }
 
+            // Finalize and save the result
             let score_percentage = (result.correct_moves as f64 / result.total_positions as f64) * 100.0;
             result.elo = Some(44.523 * score_percentage - 242.85);
 
@@ -159,12 +169,6 @@ impl StsRunner {
             fs::write(result_path, json).expect("Failed to save final STS result");
 
             println!("STS run completed for config hash: {}", result.config_hash);
-            });
-
-            if let Err(e) = inner_task.await {
-                eprintln!("STS task panicked: {e:?}");
-            }
-
             RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
             println!("Released STS lock for config hash: {config_hash}");
         });

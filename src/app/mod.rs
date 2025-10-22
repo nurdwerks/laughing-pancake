@@ -2,8 +2,9 @@
 
 use crate::{
     constants::NUM_ROUNDS,
-    event::{ActiveMatchState, ComponentState, Event, WebsocketState, WorkerState, EVENT_BROKER},
+    event::{ActiveMatchState, ComponentState, Event, WebsocketState, EVENT_BROKER},
     ga, ui,
+    worker,
 };
 use crossterm::event::{self, KeyCode};
 use ratatui::{prelude::*, widgets::ListState, Terminal};
@@ -17,13 +18,6 @@ use std::{
 };
 use sysinfo::System;
 use tokio::sync::broadcast;
-
-#[derive(Clone)]
-pub struct Worker {
-    pub id: u64,
-    pub name: String,
-    pub start_time: Instant,
-}
 
 #[derive(Clone, Default)]
 pub struct ActiveMatch {
@@ -57,7 +51,6 @@ pub struct App {
     pub active_matches: HashMap<usize, ActiveMatch>,
     evolution_thread_handle: Option<thread::JoinHandle<()>>,
     evolution_should_quit: Arc<Mutex<bool>>,
-    pub evolution_workers: Arc<Mutex<Vec<Worker>>>,
     match_id_counter: Arc<Mutex<usize>>,
     // Websocket state
     last_ws_update: Instant,
@@ -89,7 +82,6 @@ impl App {
             active_matches: HashMap::new(),
             evolution_thread_handle: None,
             evolution_should_quit: Arc::new(Mutex::new(false)),
-            evolution_workers: Arc::new(Mutex::new(Vec::new())),
             match_id_counter: Arc::new(Mutex::new(0)),
             // Websocket state
             last_ws_update: Instant::now(),
@@ -276,7 +268,6 @@ impl App {
 
     fn start_evolution(&mut self) {
         let evolution_manager = ga::EvolutionManager::new(
-            self.evolution_workers.clone(),
             self.evolution_should_quit.clone(),
             self.match_id_counter.clone(),
         );
@@ -305,7 +296,6 @@ impl App {
     }
 
     fn get_websocket_state(&self) -> WebsocketState {
-        let workers = self.evolution_workers.lock().unwrap();
         WebsocketState {
             git_hash: self.git_hash.clone(),
             cpu_usage: self.cpu_usage,
@@ -344,14 +334,7 @@ impl App {
                     })
                 })
                 .collect(),
-            evolution_workers: workers
-                .iter()
-                .map(|w| WorkerState {
-                    id: w.id,
-                    name: w.name.clone(),
-                    elapsed_time: w.start_time.elapsed().as_secs_f64(),
-                })
-                .collect(),
+            worker_statuses: worker::WORKER_STATUSES.lock().unwrap().clone(),
         }
     }
 }
