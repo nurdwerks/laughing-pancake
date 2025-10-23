@@ -20,50 +20,89 @@
             <p>ELO: <span id="sts-elo">N/A</span></p>
         </div>
 
-        <h2>Matches</h2>
-        <table id="matches-table">
-            <thead>
-                <tr>
-                    <th>Round</th>
-                    <th>White</th>
-                    <th>Black</th>
-                    <th>Result</th>
-                    <th>PGN</th>
-                </tr>
-            </thead>
-            <tbody>
-                <!-- Data will be inserted here by JavaScript -->
-            </tbody>
-        </table>
+        <div id="matches-section">
+            <h2>Matches</h2>
+            <table id="matches-table" class="data-table">
+                <thead>
+                    <tr>
+                        <th>Round</th>
+                        <th>White</th>
+                        <th>Black</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Data will be inserted here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
     </div>
     <script>
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const params = new URLSearchParams(window.location.search);
             const genId = params.get('gen');
             const indId = params.get('ind');
+
+            if (!genId || !indId) {
+                document.body.innerHTML = "<h1>Error: Generation ID and Individual ID must be provided in the URL.</h1>";
+                return;
+            }
 
             document.getElementById('individual-title').textContent = `Individual ${indId} (Generation ${genId})`;
 
             let configHash = null;
             let ws; // WebSocket connection
 
-            // Fetch individual details and then check for STS results
-            fetch(`/api/individual/${genId}/${indId}`)
-                .then(response => response.json())
-                .then(data => {
-                    document.getElementById('config-display').textContent = JSON.stringify(data.individual.config, null, 2);
+            try {
+                // Fetch generation config and individual details concurrently
+                const [configResponse, individualResponse] = await Promise.all([
+                    fetch(`/api/generation/${genId}/config`),
+                    fetch(`/api/individual/${genId}/${indId}`)
+                ]);
+
+                if (!configResponse.ok) throw new Error('Failed to load generation config');
+                if (!individualResponse.ok) throw new Error('Failed to load individual details');
+
+                const configData = await configResponse.json();
+                const individualData = await individualResponse.json();
+
+                // Display config
+                document.getElementById('config-display').textContent = JSON.stringify(individualData.individual.config, null, 2);
+
+                // Handle matches section based on selection algorithm
+                if (configData.selection_algorithm === 'StsScore') {
+                    document.getElementById('matches-section').style.display = 'none';
+                } else {
                     const matchesTableBody = document.querySelector('#matches-table tbody');
-                    data.matches.forEach(match => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td>${match.round}</td>
-                            <td>${match.white_player_name}</td>
-                            <td>${match.black_player_name}</td>
-                            <td>${match.result}</td>
-                            <td>${match.san}</td>
-                        `;
-                        matchesTableBody.appendChild(row);
-                    });
+                    if (individualData.matches.length === 0) {
+                        matchesTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center;">No matches found.</td></tr>';
+                    } else {
+                        individualData.matches.forEach(match => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${match.round}</td>
+                                <td>${match.white_player_name}</td>
+                                <td>${match.black_player_name}</td>
+                                <td>${match.result}</td>
+                            `;
+                            matchesTableBody.appendChild(row);
+                        });
+                    }
+                }
+
+                // Now that we have the config, we can get its hash and check for results
+                configHash = individualData.individual.config_hash;
+                if (configHash) {
+                    const stsResponse = await fetch(`/api/sts/result/${configHash}`);
+                    if (stsResponse.ok) {
+                        const result = await stsResponse.json();
+                        updateStsDisplay(result);
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching initial data:", error);
+                document.getElementById('config-display').textContent = 'Failed to load data.';
+            }
 
                     // Now that we have the config, we can get its hash and check for results
                     configHash = data.individual.config_hash;

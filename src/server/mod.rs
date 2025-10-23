@@ -56,6 +56,10 @@ pub async fn start_server() -> std::io::Result<()> {
                     .route("/generations", web::get().to(get_generations))
                     .route("/generation/{id}", web::get().to(get_generation_details))
                     .route(
+                        "/generation/{id}/config",
+                        web::get().to(get_generation_config),
+                    )
+                    .route(
                         "/individual/{gen_id}/{ind_id}",
                         web::get().to(get_individual_details),
                     )
@@ -73,6 +77,21 @@ async fn get_generations() -> impl Responder {
     match read_generations_summary() {
         Ok(summaries) => HttpResponse::Ok().json(summaries),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+async fn get_generation_config(path: web::Path<u32>) -> impl Responder {
+    let gen_id = path.into_inner();
+    let file_path = Path::new("evolution").join(format!("generation_{gen_id}_config.json"));
+
+    match std_fs::read_to_string(file_path) {
+        Ok(json_content) => match serde_json::from_str::<GenerationConfig>(&json_content) {
+            Ok(config) => HttpResponse::Ok().json(config),
+            Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {e}")),
+        },
+        Err(e) => {
+            HttpResponse::NotFound().body(format!("Could not read generation config file: {e}"))
+        }
     }
 }
 

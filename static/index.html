@@ -212,7 +212,7 @@
         }
 
 
-        function updateStsLeaderboard(leaderboard) {
+        function updateStsLeaderboard(leaderboard, generationId) {
             const container = document.getElementById('matches-container');
             container.innerHTML = ''; // Clear existing content
 
@@ -249,7 +249,7 @@
                 const elo = entry.elo !== null ? entry.elo.toFixed(2) : 'N/A';
                 row.innerHTML = `
                     <td>${index + 1}</td>
-                    <td><a href="/individual.html?gen_id=unknown&ind_id=${entry.individual_id}">Individual ${entry.individual_id}</a></td>
+                    <td><a href="/individual.html?gen=${generationId}&ind=${entry.individual_id}">Individual ${entry.individual_id}</a></td>
                     <td>${elo}</td>
                     <td><progress value="${entry.progress}" max="1"></progress></td>
                 `;
@@ -264,7 +264,7 @@
             updateSystemStats(state);
             if (state.selection_algorithm === 'StsScore') {
                 document.getElementById('matches-container').classList.add('sts-leaderboard-view');
-                updateStsLeaderboard(state.sts_leaderboard);
+                updateStsLeaderboard(state.sts_leaderboard, state.evolution_current_generation);
             } else {
                 document.getElementById('matches-container').classList.remove('sts-leaderboard-view');
                 updateMatches(state.active_matches);
