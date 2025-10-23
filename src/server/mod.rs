@@ -153,7 +153,7 @@ fn read_generations_summary() -> io::Result<Vec<GenerationSummary>> {
     let paths: Vec<_> = std_fs::read_dir(evolution_dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.to_string_lossy().contains("generation_") && p.extension().map_or(false, |e| e == "json"))
+        .filter(|p| p.is_file() && p.to_string_lossy().contains("generation_") && p.extension().is_some_and(|e| e == "json"))
         .collect();
 
     for path in paths {
