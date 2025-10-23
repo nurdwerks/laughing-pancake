@@ -66,18 +66,30 @@
                         } else {
                             data.forEach(gen => {
                                 const row = document.createElement('tr');
-                                row.innerHTML = `
-                                    <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
-                                    <td>${gen.selection_algorithm}</td>
-                                    <td>${gen.num_individuals}</td>
-                                    <td>${gen.num_matches}</td>
-                                    <td>${gen.white_wins}</td>
-                                    <td>${gen.black_wins}</td>
-                                    <td>${gen.draws}</td>
-                                    <td>${gen.top_elo.toFixed(2)}</td>
-                                    <td>${gen.average_elo.toFixed(2)}</td>
-                                    <td>${gen.lowest_elo.toFixed(2)}</td>
-                                `;
+                                if (gen.selection_algorithm === 'StsScore') {
+                                     row.innerHTML = `
+                                        <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
+                                        <td>${gen.selection_algorithm}</td>
+                                        <td>${gen.num_individuals}</td>
+                                        <td colspan="4" style="text-align: center;">N/A (STS Round)</td>
+                                        <td>${gen.top_elo.toFixed(2)}</td>
+                                        <td>${gen.average_elo.toFixed(2)}</td>
+                                        <td>${gen.lowest_elo.toFixed(2)}</td>
+                                    `;
+                                } else {
+                                    row.innerHTML = `
+                                        <td><a href="generation.html?gen=${gen.generation_index}">${gen.generation_index}</a></td>
+                                        <td>${gen.selection_algorithm}</td>
+                                        <td>${gen.num_individuals}</td>
+                                        <td>${gen.num_matches}</td>
+                                        <td>${gen.white_wins}</td>
+                                        <td>${gen.black_wins}</td>
+                                        <td>${gen.draws}</td>
+                                        <td>${gen.top_elo.toFixed(2)}</td>
+                                        <td>${gen.average_elo.toFixed(2)}</td>
+                                        <td>${gen.lowest_elo.toFixed(2)}</td>
+                                    `;
+                                }
                                 tableBody.appendChild(row);
                             });
                         }
