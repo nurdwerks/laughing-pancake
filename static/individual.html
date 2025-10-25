@@ -104,23 +104,6 @@
                 document.getElementById('config-display').textContent = 'Failed to load data.';
             }
 
-                    // Now that we have the config, we can get its hash and check for results
-                    configHash = data.individual.config_hash;
-                    if (configHash) {
-                        fetch(`/api/sts/result/${configHash}`)
-                            .then(response => {
-                                if (response.ok) {
-                                    return response.json();
-                                }
-                            })
-                            .then(result => {
-                                if (result) {
-                                    updateStsDisplay(result);
-                                }
-                            });
-                    }
-                });
-
             // STS Logic
             const runStsBtn = document.getElementById('run-sts-btn');
             const stsProgress = document.getElementById('sts-progress');
@@ -180,7 +163,7 @@
             };
 
             const updateStsDisplay = (result) => {
-                stsProgress.textContent = `${(result.progress * 100).toFixed(2)}%`;
+                stsProgress.textContent = `${result.progress.toFixed(2)}%`;
                 stsScore.textContent = `${result.score} / ${result.total}`;
                 stsElo.textContent = result.elo ? result.elo.toFixed(2) : 'Calculating...';
             };

@@ -14,41 +14,41 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::{fs as std_fs, io, time::Duration};
 
-#[derive(Serialize)]
-struct GenerationSummary {
-    generation_index: u32,
-    num_individuals: usize,
-    num_matches: usize,
-    white_wins: usize,
-    black_wins: usize,
-    draws: usize,
-    top_elo: f64,
-    average_elo: f64,
-    lowest_elo: f64,
-    selection_algorithm: SelectionAlgorithm,
+#[derive(Serialize, Clone)]
+pub struct GenerationSummary {
+    pub generation_index: u32,
+    pub num_individuals: usize,
+    pub num_matches: usize,
+    pub white_wins: usize,
+    pub black_wins: usize,
+    pub draws: usize,
+    pub top_elo: f64,
+    pub average_elo: f64,
+    pub lowest_elo: f64,
+    pub selection_algorithm: SelectionAlgorithm,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ApiIndividual {
+    pub id: usize,
+    pub config: SearchConfig,
+    pub elo: f64,
+    pub config_hash: u64,
 }
 
 #[derive(Serialize)]
-struct ApiIndividual {
-    id: usize,
-    config: SearchConfig,
-    elo: f64,
-    config_hash: u64,
+pub struct IndividualDetails {
+    pub individual: ApiIndividual,
+    pub matches: Vec<Match>,
 }
 
-#[derive(Serialize)]
-struct IndividualDetails {
-    individual: ApiIndividual,
-    matches: Vec<Match>,
-}
-
-#[derive(Serialize)]
-struct ApiGenerationDetails {
-    generation_index: u32,
-    round: u32,
-    population: Vec<ApiIndividual>,
-    matches: Vec<Match>,
-    sts_results: Option<Vec<StsResult>>,
+#[derive(Serialize, Clone)]
+pub struct ApiGenerationDetails {
+    pub generation_index: u32,
+    pub round: u32,
+    pub population: Vec<ApiIndividual>,
+    pub matches: Vec<Match>,
+    pub sts_results: Option<Vec<StsResult>>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -57,9 +57,11 @@ pub struct StsRunResponse {
 }
 
 /// The main entry point for the web server.
-pub async fn start_server() -> std::io::Result<()> {
-    HttpServer::new(|| {
+pub async fn start_server(mock_scenario: Option<String>) -> std::io::Result<()> {
+    HttpServer::new(move || {
+        let app_data = web::Data::new(mock_scenario.clone());
         App::new()
+            .app_data(app_data)
             .route("/ws", web::get().to(ws_index))
             .service(
                 web::scope("/api")
@@ -83,14 +85,39 @@ pub async fn start_server() -> std::io::Result<()> {
     .await
 }
 
-async fn get_generations() -> impl Responder {
+async fn get_generations(mock_scenario: web::Data<Option<String>>) -> impl Responder {
+    if let Some(scenario) = mock_scenario.get_ref() {
+        let mock_data = match scenario.as_str() {
+            "A" => crate::mock_api::MOCK_GENERATIONS_A.to_vec(),
+            "B" => crate::mock_api::MOCK_GENERATIONS_B.to_vec(),
+            "C" => crate::mock_api::MOCK_GENERATIONS_C.to_vec(),
+            _ => vec![],
+        };
+        return HttpResponse::Ok().json(mock_data);
+    }
+
     match read_generations_summary() {
         Ok(summaries) => HttpResponse::Ok().json(summaries),
         Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
 
-async fn get_generation_config(path: web::Path<u32>) -> impl Responder {
+async fn get_generation_config(
+    path: web::Path<u32>,
+    mock_scenario: web::Data<Option<String>>,
+) -> impl Responder {
+    if let Some(scenario) = mock_scenario.get_ref() {
+        let gen_id = path.into_inner();
+        if scenario == "A" || scenario == "B" {
+            if gen_id == 0 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_CONFIG_B0);
+            } else if gen_id == 1 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_CONFIG_B1);
+            }
+        }
+        return HttpResponse::NotFound().finish();
+    }
+
     let gen_id = path.into_inner();
     let file_path = Path::new("evolution").join(format!("generation_{gen_id}_config.json"));
 
@@ -105,7 +132,28 @@ async fn get_generation_config(path: web::Path<u32>) -> impl Responder {
     }
 }
 
-async fn get_generation_details(path: web::Path<u32>) -> impl Responder {
+async fn get_generation_details(
+    path: web::Path<u32>,
+    mock_scenario: web::Data<Option<String>>,
+) -> impl Responder {
+    if let Some(scenario) = mock_scenario.get_ref() {
+        let gen_id = path.into_inner();
+        if scenario == "A" {
+            if gen_id == 0 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_GENERATION_DETAILS_A0);
+            } else if gen_id == 1 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_GENERATION_DETAILS_A1);
+            }
+        } else if scenario == "B" {
+            if gen_id == 0 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_GENERATION_DETAILS_B0);
+            } else if gen_id == 1 {
+                return HttpResponse::Ok().json(&*crate::mock_api::MOCK_GENERATION_DETAILS_B1);
+            }
+        }
+        return HttpResponse::NotFound().finish();
+    }
+
     let gen_id = path.into_inner();
     let file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
 
@@ -147,7 +195,31 @@ async fn get_generation_details(path: web::Path<u32>) -> impl Responder {
     }
 }
 
-async fn get_individual_details(path: web::Path<(u32, u32)>) -> impl Responder {
+async fn get_individual_details(
+    path: web::Path<(u32, u32)>,
+    mock_scenario: web::Data<Option<String>>,
+) -> impl Responder {
+    if let Some(scenario) = mock_scenario.get_ref() {
+        let (gen_id, ind_id) = path.into_inner();
+        if (scenario == "A" || scenario == "B") && gen_id == 0 && ind_id == 0 {
+            let individual = crate::mock_api::MOCK_INDIVIDUAL_B0_0.clone();
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            individual.config.hash(&mut hasher);
+            let api_individual = ApiIndividual {
+                id: individual.id,
+                config: individual.config,
+                elo: individual.elo,
+                config_hash: hasher.finish(),
+            };
+            let details = IndividualDetails {
+                individual: api_individual,
+                matches: vec![],
+            };
+            return HttpResponse::Ok().json(details);
+        }
+        return HttpResponse::NotFound().finish();
+    }
+
     let (gen_id, ind_id) = path.into_inner();
     let file_path = Path::new("evolution").join(format!("generation_{gen_id}.json"));
 
@@ -338,13 +410,15 @@ struct WebSocketRequest {
 struct MyWs {
     subscriptions: HashSet<Subscription>,
     state_collector: Option<WebsocketState>,
+    mock_scenario: Option<String>,
 }
 
 impl MyWs {
-    fn new() -> Self {
+    fn new(mock_scenario: Option<String>) -> Self {
         Self {
             subscriptions: HashSet::new(),
             state_collector: None,
+            mock_scenario,
         }
     }
 }
@@ -382,6 +456,20 @@ impl Handler<SendStateUpdate> for MyWs {
     type Result = ();
 
     fn handle(&mut self, _: SendStateUpdate, ctx: &mut Self::Context) {
+        if let Some(scenario) = &self.mock_scenario {
+            let mock_state = match scenario.as_str() {
+                "A" => crate::mock_api::MOCK_WEBSOCKET_STATE_A.clone(),
+                "B" => crate::mock_api::MOCK_WEBSOCKET_STATE_B.clone(),
+                "C" => crate::mock_api::MOCK_WEBSOCKET_STATE_C.clone(),
+                _ => return,
+            };
+            let ws_msg = WsMessage::State(mock_state);
+            if let Ok(json) = serde_json::to_string(&ws_msg) {
+                ctx.text(json);
+            }
+            return;
+        }
+
         if let Some(state) = self.state_collector.take() {
             let ws_msg = WsMessage::State(state);
             if let Ok(json) = serde_json::to_string(&ws_msg) {
@@ -543,6 +631,10 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWs {
 
 /// This is the handler for the WebSocket connection.
 /// It will be called whenever a new WebSocket connection is established.
-async fn ws_index(r: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    ws::start(MyWs::new(), &r, stream)
+async fn ws_index(
+    r: HttpRequest,
+    stream: web::Payload,
+    mock_scenario: web::Data<Option<String>>,
+) -> Result<HttpResponse, Error> {
+    ws::start(MyWs::new(mock_scenario.get_ref().clone()), &r, stream)
 }

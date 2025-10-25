@@ -14,6 +14,22 @@
             <!-- Live status will be inserted here -->
         </div>
 
+        <div id="sts-leaderboard-container" style="display: none;">
+            <h3>Live STS Leaderboard</h3>
+            <table id="sts-leaderboard-table" class="data-table">
+                <thead>
+                    <tr>
+                        <th>Individual</th>
+                        <th>Progress</th>
+                        <th>ELO</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- STS data will be inserted here -->
+                </tbody>
+            </table>
+        </div>
+
         <table id="generations-table" class="data-table">
             <thead>
                 <tr>
@@ -106,27 +122,48 @@
                     evolution_current_round,
                     evolution_total_rounds,
                     evolution_matches_completed,
-                    evolution_total_matches
+                    evolution_total_matches,
+                    sts_leaderboard,
                 } = state;
 
+                const stsContainer = document.getElementById('sts-leaderboard-container');
+                const stsTableBody = document.querySelector('#sts-leaderboard-table tbody');
+
                 let content = `<h2>Current Generation: ${evolution_current_generation}</h2>`;
-                if (evolution_total_matches > 0) {
-                    let algorithmText = selection_algorithm;
-                    if (selection_algorithm === 'StsScore') {
-                        algorithmText = `<a href="sts.html">${selection_algorithm}</a>`;
+                if (evolution_current_generation > 0 || evolution_total_matches > 0) {
+                     if (selection_algorithm === 'StsScore') {
+                        stsContainer.style.display = 'block';
+                        stsTableBody.innerHTML = ''; // Clear previous data
+                        sts_leaderboard
+                            .sort((a, b) => (b.elo || 0) - (a.elo || 0))
+                            .forEach(entry => {
+                                const row = document.createElement('tr');
+                                const eloDisplay = entry.elo ? entry.elo.toFixed(2) : 'N/A';
+                                row.innerHTML = `
+                                    <td><a href="individual.html?gen=${evolution_current_generation}&ind=${entry.individual_id}">${entry.individual_id}</a></td>
+                                    <td>${entry.progress.toFixed(2)}%</td>
+                                    <td>${eloDisplay}</td>
+                                `;
+                                stsTableBody.appendChild(row);
+                            });
+
+                         content += `<p><strong>Algorithm:</strong> <a href="sts.html">${selection_algorithm}</a> | Evaluating ${sts_leaderboard.length} individuals...</p>`;
+                    } else {
+                        stsContainer.style.display = 'none';
+                        content += `
+                            <p>
+                                <strong>Algorithm:</strong> ${selection_algorithm} |
+                                <strong>Round:</strong> ${evolution_current_round}/${evolution_total_rounds} |
+                                <strong>Matches:</strong> ${evolution_matches_completed}/${evolution_total_matches}
+                            </p>
+                            <progress value="${evolution_matches_completed}" max="${evolution_total_matches}" style="width: 100%;"></progress>
+                        `;
                     }
-                    content += `
-                        <p>
-                            <strong>Algorithm:</strong> ${algorithmText} |
-                            <strong>Round:</strong> ${evolution_current_round}/${evolution_total_rounds} |
-                            <strong>Matches:</strong> ${evolution_matches_completed}/${evolution_total_matches}
-                        </p>
-                        <progress value="${evolution_matches_completed}" max="${evolution_total_matches}" style="width: 100%;"></progress>
-                    `;
                 } else {
-                     content += '<p>Waiting for the first generation to start...</p>';
+                    stsContainer.style.display = 'none';
+                    content += '<p>Waiting for the first generation to start...</p>';
                 }
-                 statusDiv.innerHTML = content;
+                statusDiv.innerHTML = content;
             }
 
             fetchGenerations();
