@@ -10,6 +10,7 @@ use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer, Responde
 use actix_web_actors::ws;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::{fs as std_fs, io, time::Duration};
 
@@ -39,6 +40,15 @@ struct ApiIndividual {
 struct IndividualDetails {
     individual: ApiIndividual,
     matches: Vec<Match>,
+}
+
+#[derive(Serialize)]
+struct ApiGenerationDetails {
+    generation_index: u32,
+    round: u32,
+    population: Vec<ApiIndividual>,
+    matches: Vec<Match>,
+    sts_results: Option<Vec<StsResult>>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -105,7 +115,31 @@ async fn get_generation_details(path: web::Path<u32>) -> impl Responder {
                 gen.population.individuals.sort_by(|a, b| {
                     b.elo.partial_cmp(&a.elo).unwrap_or(std::cmp::Ordering::Equal)
                 });
-                HttpResponse::Ok().json(gen)
+
+                let api_population = gen
+                    .population
+                    .individuals
+                    .into_iter()
+                    .map(|ind| {
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        ind.config.hash(&mut hasher);
+                        ApiIndividual {
+                            id: ind.id,
+                            config: ind.config,
+                            elo: ind.elo,
+                            config_hash: hasher.finish(),
+                        }
+                    })
+                    .collect();
+
+                let response = ApiGenerationDetails {
+                    generation_index: gen.generation_index,
+                    round: gen.round,
+                    population: api_population,
+                    matches: gen.matches,
+                    sts_results: gen.sts_results,
+                };
+                HttpResponse::Ok().json(response)
             }
             Err(e) => HttpResponse::InternalServerError().body(format!("Deserialization error: {e}")),
         },
