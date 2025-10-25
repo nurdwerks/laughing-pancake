@@ -21,8 +21,9 @@ use crate::server::StsRunResponse;
 use crate::worker::WorkerStatus;
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SelectionAlgorithm {
+    #[default]
     SwissTournament,
     StsScore,
 }
@@ -34,7 +35,7 @@ pub struct StsLeaderboardEntry {
     pub elo: Option<f64>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Default)]
 pub struct WebsocketState {
     pub git_hash: String,
     // System info

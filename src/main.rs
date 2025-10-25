@@ -3,6 +3,7 @@
 mod app;
 mod game;
 mod ga;
+mod mock_api;
 mod event;
 pub mod server;
 mod constants;
@@ -23,6 +24,9 @@ struct Args {
     #[arg(long)]
     opening_book: Option<String>,
 
+    /// Run in mock mode for frontend verification, accepts A, B, or C
+    #[arg(long)]
+    mock_scenario: Option<String>,
 }
 
 #[cfg(not(test))]
@@ -38,7 +42,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use tokio::signal;
 
     let _worker_pool = worker::WorkerPool::new();
-    let _args = Args::parse();
+    let args = Args::parse();
+    let mock_scenario_for_server = args.mock_scenario.clone();
 
     // Get the git hash
     let git_hash = match process::Command::new("git")
@@ -50,8 +55,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Start the server in a new thread
-    thread::spawn(|| {
-        if let Err(e) = actix_rt::System::new().block_on(server::start_server()) {
+    thread::spawn(move || {
+        if let Err(e) =
+            actix_rt::System::new().block_on(server::start_server(mock_scenario_for_server))
+        {
             eprintln!("Server error: {e}");
         }
     });
@@ -68,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{msg}");
     }));
 
-    let mut app = App::new(git_hash);
+    let mut app = App::new(git_hash, args);
 
     println!("Running in headless mode.");
     let res = app.run_headless().await;
