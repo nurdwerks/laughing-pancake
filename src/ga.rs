@@ -229,8 +229,7 @@ impl EvolutionManager {
             }
 
             let next_generation_dir = setup_directories(generation_index + 1);
-            let final_generation = generation.clone();
-            self.evolve_population(&final_generation, &next_generation_dir, &config)
+            self.evolve_population(&mut generation, &next_generation_dir, &config)
                 .await?;
             self.send_status(format!("--- Generation {generation_index} Complete ---"))?;
             generation_index += 1;
@@ -276,13 +275,14 @@ impl EvolutionManager {
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
             match_id_counter: 0,
+            sts_results: None,
         })
     }
 
     /// Takes a completed tournament population and evolves it to create the next generation.
     async fn evolve_population(
         &self,
-        generation: &Generation,
+        generation: &mut Generation,
         next_generation_dir: &Path,
         config: &GenerationConfig,
     ) -> Result<(), ()> {
@@ -416,7 +416,7 @@ impl EvolutionManager {
     #[cfg(test)]
     async fn evolve_population_sts_with_mock_results(
         &self,
-        generation: &Generation,
+        generation: &mut Generation,
         next_generation_dir: &Path,
         mut sts_results: Vec<StsResult>,
     ) -> Result<(), ()> {
@@ -496,7 +496,7 @@ impl EvolutionManager {
     /// Evolves the population based on STS scores.
     async fn evolve_population_sts(
         &self,
-        generation: &Generation,
+        generation: &mut Generation,
         next_generation_dir: &Path,
     ) -> Result<(), ()> {
         self.send_status("Starting STS-based evolution...".to_string())?;
@@ -504,6 +504,9 @@ impl EvolutionManager {
         // --- Stage 1: Run STS for all individuals ---
         let mut sts_results = self.run_sts_for_population(&generation.population).await?;
         self.send_status(format!("Completed STS runs for {} individuals.", sts_results.len()))?;
+
+        generation.sts_results = Some(sts_results.clone());
+        save_generation(generation);
 
         // Sort individuals by their STS score (higher is better)
         sts_results.sort_by(|a, b| {
@@ -1256,8 +1259,10 @@ pub struct Generation {
     pub black_games_played: HashMap<usize, u32>,
     #[serde(default)]
     pub round_pairings: Vec<Match>,
-	#[serde(default)]
+    #[serde(default)]
     pub match_id_counter: usize,
+    #[serde(default)]
+    pub sts_results: Option<Vec<StsResult>>,
 }
 
 // Helper for serializing HashSet<(A, B)>
@@ -1559,6 +1564,7 @@ mod tests {
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
             match_id_counter: 0,
+            sts_results: None,
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
@@ -1600,6 +1606,7 @@ mod tests {
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
             match_id_counter: 0,
+            sts_results: None,
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
@@ -1622,7 +1629,7 @@ mod tests {
         }
 
         let population = Population { individuals };
-        let generation = Generation {
+        let mut generation = Generation {
             generation_index: 0,
             round: NUM_ROUNDS,
             population,
@@ -1632,6 +1639,7 @@ mod tests {
             black_games_played: HashMap::new(),
             round_pairings: Vec::new(),
             match_id_counter: 0,
+            sts_results: None,
         };
 
         let evolution_manager = EvolutionManager::new(Arc::new(Mutex::new(false)), Arc::new(Mutex::new(0)));
@@ -1654,7 +1662,7 @@ mod tests {
         }
 
         evolution_manager
-            .evolve_population_sts_with_mock_results(&generation, &next_gen_dir, sts_results)
+            .evolve_population_sts_with_mock_results(&mut generation, &next_gen_dir, sts_results)
             .await
             .unwrap();
 
