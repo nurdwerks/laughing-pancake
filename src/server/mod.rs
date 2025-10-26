@@ -1,7 +1,7 @@
 // src/server/mod.rs
 
 use crate::event::{Event, SelectionAlgorithm, WebsocketState, WsMessage, EVENT_BROKER};
-use crate::ga::{Generation, GenerationConfig, Match};
+use crate::ga::{Generation, GenerationConfig, Match, SelectionModeConfig};
 use crate::game::search::SearchConfig;
 use crate::sts::{StsResult, StsRunner};
 use actix::{Actor, AsyncContext, Handler, Message, StreamHandler};
@@ -76,7 +76,9 @@ pub async fn start_server(mock_scenario: Option<String>) -> std::io::Result<()> 
                         web::get().to(get_individual_details),
                     )
                     .route("/sts/run/{gen_id}/{ind_id}", web::post().to(run_sts_test))
-                    .route("/sts/result/{config_hash}", web::get().to(get_sts_result)),
+                    .route("/sts/result/{config_hash}", web.get().to(get_sts_result))
+                    .route("/selection_mode", web::get().to(get_selection_mode))
+                    .route("/selection_mode", web::post().to(set_selection_mode)),
             )
             .service(fs::Files::new("/", "./static").index_file("index.html"))
     })
@@ -637,4 +639,16 @@ async fn ws_index(
     mock_scenario: web::Data<Option<String>>,
 ) -> Result<HttpResponse, Error> {
     ws::start(MyWs::new(mock_scenario.get_ref().clone()), &r, stream)
+}
+
+async fn get_selection_mode() -> impl Responder {
+    let config = SelectionModeConfig::load();
+    HttpResponse::Ok().json(config)
+}
+
+async fn set_selection_mode(new_config: web::Json<SelectionModeConfig>) -> impl Responder {
+    match new_config.save() {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
 }
