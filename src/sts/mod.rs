@@ -5,7 +5,7 @@ use crate::game::search::SearchConfig;
 use crate::worker::{push_job, Job};
 use lazy_static::lazy_static;
 use shakmaty::Chess;
-use std::collections::{hash_map::DefaultHasher, HashSet};
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -15,7 +15,32 @@ use tokio::sync::mpsc;
 use tokio::task;
 
 lazy_static! {
-    static ref RUNNING_STS_TESTS: Mutex<HashSet<u64>> = Mutex::new(HashSet::new());
+    static ref STS_LOCK: Mutex<bool> = Mutex::new(false);
+}
+
+// A guard that releases the STS lock when it's dropped.
+struct StsLockGuard;
+
+impl Drop for StsLockGuard {
+    fn drop(&mut self) {
+        let mut lock = STS_LOCK.lock().unwrap();
+        *lock = false;
+        println!("Released STS lock.");
+    }
+}
+
+// Function to try to acquire the lock
+fn try_lock_sts() -> Option<StsLockGuard> {
+    let mut lock = STS_LOCK.lock().unwrap();
+    if *lock {
+        // Already locked
+        None
+    } else {
+        // Acquire the lock
+        *lock = true;
+        println!("Acquired STS lock.");
+        Some(StsLockGuard)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -61,17 +86,16 @@ impl StsRunner {
     }
 
     pub async fn run(&mut self) -> Option<StsResult> {
-        {
-            let mut running_tests = RUNNING_STS_TESTS.lock().unwrap();
-            if !running_tests.is_empty() {
+        let _lock_guard = match try_lock_sts() {
+            Some(guard) => guard,
+            None => {
                 println!(
                     "An STS run is already in progress. Skipping run for config hash {}.",
                     self.config_hash
                 );
                 return None;
             }
-            running_tests.insert(self.config_hash);
-        }
+        };
 
         let sts_dir = Path::new("sts");
         let results_dir = Path::new("sts_results");
@@ -108,7 +132,6 @@ impl StsRunner {
 
         let config = self.config.clone();
         let mut result = self.result.clone();
-        let config_hash = self.config_hash;
 
         // This task will manage the entire STS run, distributing jobs to the worker pool.
         let handle = task::spawn(async move {
@@ -173,13 +196,7 @@ impl StsRunner {
             result
         });
 
-        let final_result = handle.await.ok();
-
-        // Release the lock after the task is complete
-        RUNNING_STS_TESTS.lock().unwrap().remove(&config_hash);
-        println!("Released STS lock for config hash: {config_hash}");
-
-        final_result
+        handle.await.ok()
     }
 }
 
