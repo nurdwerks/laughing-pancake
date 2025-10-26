@@ -7,22 +7,19 @@ pub mod mcts_cache;
 use shakmaty::{Chess, Move, Position, Piece, san::SanPlus, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use crate::game::evaluation;
-use crossbeam_utils::thread;
-use num_cpus;
 use evaluation_cache::EvaluationCache;
 pub use mcts_cache::{MctsCache, MctsNodeData};
-
-const MATE_SCORE: i32 = 1_000_000;
+use crate::constants::MATE_SCORE;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SearchAlgorithm {
     Pvs,
     Mcts,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SearchConfig {
     pub search_depth: u8,
     pub search_algorithm: SearchAlgorithm,
@@ -57,6 +54,72 @@ pub struct SearchConfig {
     pub tempo_bonus_weight: i32,
     pub space_evaluation_weight: i32,
     pub initiative_evaluation_weight: i32,
+    pub enhanced_king_attack_weight: i32,
+    pub advanced_passed_pawn_weight: i32,
+    pub opponent_weakness_weight: i32,
+    pub contempt_factor: i32,
+    pub draw_avoidance_margin: i32,
+}
+
+impl SearchConfig {
+    #[cfg_attr(test, allow(dead_code))]
+    pub fn default_with_randomization(rng: &mut impl rand::Rng) -> Self {
+        let mut config = Self::default();
+        let default_config = Self::default(); // for reference values
+
+        config.search_depth = rng.gen_range(3..=5);
+
+        // Randomize booleans
+        config.use_aspiration_windows = rng.gen_bool(0.5);
+        config.use_history_heuristic = rng.gen_bool(0.5);
+        config.use_killer_moves = rng.gen_bool(0.5);
+        config.use_quiescence_search = rng.gen_bool(0.5);
+        config.use_pvs = rng.gen_bool(0.5);
+        config.use_null_move_pruning = rng.gen_bool(0.5);
+        config.use_lmr = rng.gen_bool(0.5);
+        config.use_futility_pruning = rng.gen_bool(0.5);
+        config.use_delta_pruning = rng.gen_bool(0.5);
+
+        // Randomize enum
+        config.search_algorithm = SearchAlgorithm::Pvs;
+
+        // Helper function for numeric randomization
+        let mut vary_numeric = |value: i32| -> i32 {
+            let factor = rng.gen_range(-0.5..=0.5);
+            (value as f64 * (1.0 + factor)).round() as i32
+        };
+
+        // Randomize numeric values with +/- 50% variance
+        config.mcts_simulations = vary_numeric(default_config.mcts_simulations as i32) as u32;
+        config.pawn_structure_weight = vary_numeric(default_config.pawn_structure_weight);
+        config.piece_mobility_weight = vary_numeric(default_config.piece_mobility_weight);
+        config.king_safety_weight = vary_numeric(default_config.king_safety_weight);
+        config.piece_development_weight = vary_numeric(default_config.piece_development_weight);
+        config.rook_placement_weight = vary_numeric(default_config.rook_placement_weight);
+        config.bishop_placement_weight = vary_numeric(default_config.bishop_placement_weight);
+        config.knight_placement_weight = vary_numeric(default_config.knight_placement_weight);
+        config.passed_pawn_weight = vary_numeric(default_config.passed_pawn_weight);
+        config.isolated_pawn_weight = vary_numeric(default_config.isolated_pawn_weight);
+        config.doubled_pawn_weight = vary_numeric(default_config.doubled_pawn_weight);
+        config.bishop_pair_weight = vary_numeric(default_config.bishop_pair_weight);
+        config.pawn_chain_weight = vary_numeric(default_config.pawn_chain_weight);
+        config.ram_weight = vary_numeric(default_config.ram_weight);
+        config.candidate_passed_pawn_weight = vary_numeric(default_config.candidate_passed_pawn_weight);
+        config.king_pawn_shield_weight = vary_numeric(default_config.king_pawn_shield_weight);
+        config.king_open_file_penalty = vary_numeric(default_config.king_open_file_penalty);
+        config.king_attackers_weight = vary_numeric(default_config.king_attackers_weight);
+        config.threat_analysis_weight = vary_numeric(default_config.threat_analysis_weight);
+        config.tempo_bonus_weight = vary_numeric(default_config.tempo_bonus_weight);
+        config.space_evaluation_weight = vary_numeric(default_config.space_evaluation_weight);
+        config.initiative_evaluation_weight = vary_numeric(default_config.initiative_evaluation_weight);
+        config.enhanced_king_attack_weight = vary_numeric(default_config.enhanced_king_attack_weight);
+        config.advanced_passed_pawn_weight = vary_numeric(default_config.advanced_passed_pawn_weight);
+        config.opponent_weakness_weight = vary_numeric(default_config.opponent_weakness_weight);
+        config.contempt_factor = rng.gen_range(0..=50);
+        config.draw_avoidance_margin = rng.gen_range(0..=100);
+
+        config
+    }
 }
 
 impl Default for SearchConfig {
@@ -95,15 +158,16 @@ impl Default for SearchConfig {
             tempo_bonus_weight: 10,
             space_evaluation_weight: 100,
             initiative_evaluation_weight: 100,
+            enhanced_king_attack_weight: 100,
+            advanced_passed_pawn_weight: 100,
+            opponent_weakness_weight: 100,
+            contempt_factor: 0,
+            draw_avoidance_margin: 0,
         }
     }
 }
 
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use crate::app::Worker;
-use crate::event::Event;
-use crossbeam_channel::Sender;
 
 #[derive(Clone, Debug)]
 pub struct MoveTreeNode {
@@ -112,14 +176,13 @@ pub struct MoveTreeNode {
     pub children: Vec<MoveTreeNode>,
 }
 
+#[cfg_attr(test, allow(dead_code))]
 pub trait Searcher: Send {
     fn search(
         &mut self,
         pos: &Chess,
         depth: u8,
         config: &SearchConfig,
-        workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<Event>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>);
 }
 
@@ -136,12 +199,10 @@ impl Searcher for PvsSearcher {
         pos: &Chess,
         depth: u8,
         config: &SearchConfig,
-        workers: Option<Arc<Mutex<Vec<Worker>>>>,
-        update_sender: Option<Sender<Event>>,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
             let args = PvsRootSearchArgs {
-                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, workers, update_sender
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE
             };
             let (move_opt, score, tree) = self.pvs_root_search(args);
             return (move_opt, score, Some(tree));
@@ -153,13 +214,13 @@ impl Searcher for PvsSearcher {
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
         let args = PvsRootSearchArgs {
-            pos, depth, config, alpha, beta, workers: workers.clone(), update_sender: update_sender.clone()
+            pos, depth, config, alpha, beta
         };
         let (mut best_move, mut score, mut tree) = self.pvs_root_search(args);
 
         if score <= alpha || score >= beta {
             let args = PvsRootSearchArgs {
-                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, workers, update_sender
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE
             };
             (best_move, score, tree) = self.pvs_root_search(args);
         }
@@ -174,11 +235,10 @@ struct PvsRootSearchArgs<'a> {
     config: &'a SearchConfig,
     alpha: i32,
     beta: i32,
-    workers: Option<Arc<Mutex<Vec<Worker>>>>,
-    update_sender: Option<Sender<Event>>,
 }
 
 impl PvsSearcher {
+    #[cfg_attr(test, allow(dead_code))]
     pub fn with_shared_cache(cache: Arc<Mutex<EvaluationCache>>) -> Self {
         Self {
             history_table: [[0; 64]; 12],
@@ -197,79 +257,32 @@ impl PvsSearcher {
             score: 0,
             children: Vec::new(),
         };
+
         if legal_moves.is_empty() {
             return (None, self.evaluate_with_cache(args.pos, args.config), root_node);
         }
+
         self.order_moves(&mut legal_moves, args.pos, 0, args.config, None);
 
-        let num_threads = num_cpus::get();
-        let (tx, rx) = std::sync::mpsc::channel();
-
-        thread::scope(|s| {
-            for moves_chunk in legal_moves.chunks( (legal_moves.len() / num_threads).max(1) ) {
-                let pos = args.pos.clone();
-                let config = args.config.clone();
-                let mut searcher = self.clone();
-                let tx = tx.clone();
-                let workers = args.workers.clone();
-                let _update_sender = args.update_sender.clone();
-                let moves_chunk_owned: Vec<Move> = moves_chunk.to_vec();
-
-                s.spawn(move |_| {
-                    let worker_id = rand::random::<u64>();
-                    let worker_name = moves_chunk_owned.iter()
-                        .map(|m| SanPlus::from_move(pos.clone(), *m).to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-
-                    let worker_display_name = format!("PVS: {worker_name}");
-
-                    if let Some(w) = &workers {
-                        let mut worker_list = w.lock().unwrap();
-                        worker_list.push(Worker {
-                            id: worker_id,
-                            name: worker_display_name.clone(),
-                            start_time: Instant::now(),
-                        });
-                    }
-
-                    let mut chunk_alpha = -MATE_SCORE;
-
-                    for m in &moves_chunk_owned {
-                        let mut new_pos = pos.clone();
-                        new_pos.play_unchecked(*m);
-                        let (score, child_node) =
-                            searcher.alpha_beta(&new_pos, args.depth - 1, 1, -args.beta, -chunk_alpha, &config);
-                        let score = -score;
-
-                        if score > chunk_alpha {
-                            chunk_alpha = score;
-                        }
-
-                        let san = SanPlus::from_move(pos.clone(), *m);
-                        let mut node = child_node;
-                        node.move_san = san.to_string();
-                        node.score = score;
-                        tx.send(((Some(*m), score), node)).unwrap();
-                    }
-
-                    if let Some(w) = &workers {
-                        let mut worker_list = w.lock().unwrap();
-                        worker_list.retain(|worker| worker.id != worker_id);
-                    }
-                });
-            }
-        })
-        .unwrap();
-
-        drop(tx);
-
         let mut best_move = None;
-        for ((move_option, score), node) in rx.iter() {
+
+        for m in legal_moves {
+            let mut new_pos = args.pos.clone();
+            new_pos.play_unchecked(m);
+
+            let (score, child_node) =
+                self.alpha_beta(&new_pos, args.depth - 1, 1, -args.beta, -args.alpha, args.config);
+            let score = -score;
+
+            let san = SanPlus::from_move(args.pos.clone(), m);
+            let mut node = child_node;
+            node.move_san = san.to_string();
+            node.score = score;
             root_node.children.push(node);
+
             if score > args.alpha {
                 args.alpha = score;
-                best_move = move_option;
+                best_move = Some(m);
             }
         }
 

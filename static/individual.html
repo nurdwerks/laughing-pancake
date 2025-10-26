@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Individual Details</title>
+    <link rel="stylesheet" href="main_style.css">
+</head>
+<body>
+    <div class="container">
+        <h1 id="individual-title"></h1>
+        <h2>Configuration</h2>
+        <pre id="config-display"></pre>
+
+        <h2>STS ELO Estimation</h2>
+        <button id="run-sts-btn">Run STS Test</button>
+        <div id="sts-results">
+            <p>Progress: <span id="sts-progress">N/A</span></p>
+            <p>Score: <span id="sts-score">N/A</span></p>
+            <p>ELO: <span id="sts-elo">N/A</span></p>
+        </div>
+
+        <div id="matches-section">
+            <h2>Matches</h2>
+            <table id="matches-table" class="data-table">
+                <thead>
+                    <tr>
+                        <th>Round</th>
+                        <th>White</th>
+                        <th>Black</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- Data will be inserted here by JavaScript -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const params = new URLSearchParams(window.location.search);
+            const genId = params.get('gen');
+            const indId = params.get('ind');
+
+            if (!genId || !indId) {
+                document.body.innerHTML = "<h1>Error: Generation ID and Individual ID must be provided in the URL.</h1>";
+                return;
+            }
+
+            document.getElementById('individual-title').textContent = `Individual ${indId} (Generation ${genId})`;
+
+            let configHash = null;
+            let ws; // WebSocket connection
+
+            try {
+                // Fetch generation config and individual details concurrently
+                const [configResponse, individualResponse] = await Promise.all([
+                    fetch(`/api/generation/${genId}/config`),
+                    fetch(`/api/individual/${genId}/${indId}`)
+                ]);
+
+                if (!configResponse.ok) throw new Error('Failed to load generation config');
+                if (!individualResponse.ok) throw new Error('Failed to load individual details');
+
+                const configData = await configResponse.json();
+                const individualData = await individualResponse.json();
+
+                // Display config
+                document.getElementById('config-display').textContent = JSON.stringify(individualData.individual.config, null, 2);
+
+                // Handle matches section based on selection algorithm
+                if (configData.selection_algorithm === 'StsScore') {
+                    document.getElementById('matches-section').style.display = 'none';
+                } else {
+                    const matchesTableBody = document.querySelector('#matches-table tbody');
+                    if (individualData.matches.length === 0) {
+                        matchesTableBody.innerHTML = '<tr><td colspan="4" style="text-align: center;">No matches found.</td></tr>';
+                    } else {
+                        individualData.matches.forEach(match => {
+                            const row = document.createElement('tr');
+                            row.innerHTML = `
+                                <td>${match.round}</td>
+                                <td>${match.white_player_name}</td>
+                                <td>${match.black_player_name}</td>
+                                <td>${match.result}</td>
+                            `;
+                            matchesTableBody.appendChild(row);
+                        });
+                    }
+                }
+
+                // Now that we have the config, we can get its hash and check for results
+                configHash = individualData.individual.config_hash;
+                if (configHash) {
+                    const stsResponse = await fetch(`/api/sts/result/${configHash}`);
+                    if (stsResponse.ok) {
+                        const result = await stsResponse.json();
+                        updateStsDisplay(result);
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching initial data:", error);
+                document.getElementById('config-display').textContent = 'Failed to load data.';
+            }
+
+            // STS Logic
+            const runStsBtn = document.getElementById('run-sts-btn');
+            const stsProgress = document.getElementById('sts-progress');
+            const stsScore = document.getElementById('sts-score');
+            const stsElo = document.getElementById('sts-elo');
+
+            const connectWs = () => {
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
+
+                ws.onopen = () => {
+                    console.log("WebSocket connection established.");
+                    // Subscribe to STS updates for this specific individual
+                    ws.send(JSON.stringify({
+                        subscribe: "StsIndividual",
+                        gen_id: parseInt(genId),
+                        ind_id: parseInt(indId)
+                    }));
+                };
+
+                ws.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+
+                    // When the backend confirms the test has started or a subscription is confirmed, it sends the hash.
+                    if (msg.type === 'StsStarted') {
+                        configHash = msg.payload.config_hash;
+                        console.log(`Now listening for STS updates for hash: ${configHash}.`);
+
+                        // Check for existing results immediately after getting the hash
+                        fetch(`/api/sts/result/${configHash}`)
+                            .then(response => {
+                                if (response.ok) {
+                                    return response.json();
+                                }
+                            })
+                            .then(result => {
+                                if (result) {
+                                    updateStsDisplay(result);
+                                }
+                            });
+                    }
+
+                    if (msg.type === 'Sts' && msg.payload.config_hash === configHash) {
+                        updateStsDisplay(msg.payload);
+                    }
+                };
+
+                 ws.onclose = () => {
+                    console.log("WebSocket connection closed. Attempting to reconnect in 1 second...");
+                    setTimeout(connectWs, 1000);
+                };
+
+                ws.onerror = (err) => {
+                    console.error("WebSocket error:", err);
+                    ws.close();
+                };
+            };
+
+            const updateStsDisplay = (result) => {
+                stsProgress.textContent = `${result.progress.toFixed(2)}%`;
+                stsScore.textContent = `${result.score} / ${result.total}`;
+                stsElo.textContent = result.elo ? result.elo.toFixed(2) : 'Calculating...';
+            };
+
+            runStsBtn.addEventListener('click', () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    // Reset display on new run
+                    stsProgress.textContent = '0.00%';
+                    stsScore.textContent = '0 / 0';
+                    stsElo.textContent = 'Requesting...';
+
+                    console.log(`Requesting STS run for G${genId}, I${indId}`);
+                    ws.send(JSON.stringify({
+                        action: "run_sts",
+                        gen_id: parseInt(genId),
+                        ind_id: parseInt(indId)
+                    }));
+                } else {
+                    console.error("WebSocket is not connected.");
+                    alert("WebSocket is not connected. Please refresh the page.");
+                }
+            });
+
+            connectWs();
+        });
+    </script>
+</body>
+</html>

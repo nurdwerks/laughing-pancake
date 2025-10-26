@@ -1,10 +1,7 @@
 // src/game/evaluation/advanced_pawn_structure.rs
 
 use shakmaty::{Board, Color, Piece, Role, Bitboard, File, Rank, Square};
-
-const PAWN_CHAIN_BONUS: i32 = 10;
-const RAM_PENALTY: i32 = -5;
-const CANDIDATE_PASSED_PAWN_BONUS: i32 = 15;
+use crate::constants::{PAWN_CHAIN_BONUS, RAM_PENALTY, CANDIDATE_PASSED_PAWN_BONUS};
 
 /// Evaluates pawn chains for a given color.
 /// A pawn chain is a pawn defended by another pawn.

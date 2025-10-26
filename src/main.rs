@@ -1,19 +1,16 @@
+
+
 mod app;
-mod ui;
 mod game;
 mod ga;
+mod mock_api;
 mod event;
-mod server;
+pub mod server;
+mod constants;
+mod sts;
+mod worker;
 
-use crate::app::{App};
 use clap::Parser;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use ratatui::{prelude::CrosstermBackend, Terminal};
-use std::{error::Error, io, panic, thread};
 
 
 #[derive(Parser, Debug)]
@@ -26,18 +23,49 @@ struct Args {
     /// Path to the PGN opening book file
     #[arg(long)]
     opening_book: Option<String>,
+
+    /// Run in mock mode for frontend verification, accepts A, B, or C
+    #[arg(long)]
+    mock_scenario: Option<String>,
 }
 
 #[cfg(not(test))]
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let _args = Args::parse();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::{
+        app::App,
+        event::{Event, EVENT_BROKER},
+    };
+    use std::panic;
+    use std::process;
+    use std::thread;
+    use tokio::signal;
+
+    let _worker_pool = worker::WorkerPool::new();
+    let args = Args::parse();
+    let mock_scenario_for_server = args.mock_scenario.clone();
+
+    // Get the git hash
+    let git_hash = match process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+    {
+        Ok(output) => String::from_utf8(output.stdout).unwrap_or_default().trim().to_string(),
+        Err(_) => "N/A".to_string(),
+    };
 
     // Start the server in a new thread
-    thread::spawn(|| {
-        if let Err(e) = actix_rt::System::new().block_on(server::start_server()) {
+    thread::spawn(move || {
+        if let Err(e) =
+            actix_rt::System::new().block_on(server::start_server(mock_scenario_for_server))
+        {
             eprintln!("Server error: {e}");
         }
+    });
+
+    tokio::spawn(async move {
+        signal::ctrl_c().await.unwrap();
+        EVENT_BROKER.publish(Event::ForceQuit);
     });
 
     panic::set_hook(Box::new(|info| {
@@ -47,31 +75,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         eprintln!("{msg}");
     }));
 
+    let mut app = App::new(git_hash, args);
 
-    // setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // create app and run it
-    let mut app = App::new();
-    let res = app.run(&mut terminal).await;
-
-    // restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
+    println!("Running in headless mode.");
+    let res = app.run_headless().await;
     if let Err(err) = res {
-        println!("{err:?}");
-    } else if let Some(err) = app.error_message {
+        eprintln!("Headless mode error: {err:?}");
+        process::exit(1);
+    }
+
+    if let Some(err) = app.error_message {
         println!("Application exited with an error: {err}");
+        process::exit(1);
+    } else {
+        println!("Application exited gracefully. The run.sh script will restart it shortly.");
     }
 
     Ok(())

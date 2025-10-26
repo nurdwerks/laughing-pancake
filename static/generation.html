@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generation Details</title>
+    <link rel="stylesheet" href="main_style.css">
+</head>
+<body>
+    <div class="full-width-container">
+        <h1 id="generation-title"></h1>
+        <div id="generation-details">
+            <!-- Generation data will be loaded here -->
+        </div>
+        <div class="link-container">
+            <a href="history.html" class="button-link">View History</a>
+        </div>
+    </div>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const detailsContainer = document.getElementById('generation-details');
+            const titleElement = document.getElementById('generation-title');
+            const params = new URLSearchParams(window.location.search);
+            const requestedGenId = params.get('gen');
+
+            if (requestedGenId) {
+                titleElement.textContent = `Generation ${requestedGenId}`;
+                fetchAndDisplayGeneration(requestedGenId, detailsContainer);
+            } else {
+                titleElement.textContent = 'No Generation Specified';
+            }
+        });
+
+        async function fetchAndDisplayGeneration(genId, contentElement) {
+            try {
+                const [configResponse, dataResponse] = await Promise.all([
+                    fetch(`/api/generation/${genId}/config`),
+                    fetch(`/api/generation/${genId}`)
+                ]);
+
+                if (!configResponse.ok) {
+                    throw new Error(`Could not fetch config for generation ${genId} (status: ${configResponse.status})`);
+                }
+                if (!dataResponse.ok) {
+                    throw new Error(`Could not fetch data for generation ${genId} (status: ${dataResponse.status})`);
+                }
+
+                const configData = await configResponse.json();
+                const data = await dataResponse.json();
+                const algorithm = configData.selection_algorithm;
+
+                if (algorithm === 'StsScore') {
+                    renderStsLeaderboard(genId, data, contentElement);
+                } else {
+                    renderSwissTournament(genId, data, contentElement);
+                }
+
+            } catch (error) {
+                contentElement.innerHTML = `<p>Error loading generation data: ${error}</p>`;
+                console.error("Error details:", error);
+            }
+        }
+
+        function renderSwissTournament(genId, data, contentElement) {
+            contentElement.innerHTML = ''; // Clear previous content
+
+            // Sort individuals by ELO descending
+            const sortedIndividuals = data.population.individuals.sort((a, b) => b.elo - a.elo);
+
+            const table = document.createElement('table');
+            table.className = 'data-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>ELO</th>
+                        <th>Config Hash</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+
+            const tbody = table.querySelector('tbody');
+            sortedIndividuals.forEach(ind => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><a href="individual.html?gen=${genId}&ind=${ind.id}">${ind.id}</a></td>
+                    <td>${ind.elo.toFixed(2)}</td>
+                    <td>${ind.config_hash}</td>
+                `;
+                tbody.appendChild(row);
+            });
+            contentElement.appendChild(table);
+        }
+
+        async function renderStsLeaderboard(genId, data, contentElement) {
+            contentElement.innerHTML = '<h2>STS ELO Results</h2><p>Loading STS results...</p>';
+
+            const fetchPromises = data.population.individuals.map(ind =>
+                fetch(`/api/sts/result/${ind.config_hash}`)
+                    .then(res => res.ok ? res.json() : null)
+                    .then(result => ({ individual: ind, sts: result }))
+            );
+
+            const results = await Promise.all(fetchPromises);
+
+            // Filter out individuals with no STS results and sort by ELO
+            const sortedResults = results
+                .filter(r => r.sts && r.sts.elo !== null)
+                .sort((a, b) => b.sts.elo - a.sts.elo);
+
+            contentElement.innerHTML = '';
+            const table = document.createElement('table');
+            table.className = 'data-table';
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Individual ID</th>
+                        <th>STS ELO</th>
+                        <th>Score</th>
+                        <th>Progress</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            `;
+            const tbody = table.querySelector('tbody');
+
+            if (sortedResults.length === 0) {
+                 tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No completed STS results found for this generation.</td></tr>';
+            } else {
+                sortedResults.forEach((item, index) => {
+                    const row = document.createElement('tr');
+                    const elo = item.sts.elo.toFixed(2);
+                    row.innerHTML = `
+                        <td>${index + 1}</td>
+                        <td><a href="individual.html?gen=${genId}&ind=${item.individual.id}">${item.individual.id}</a></td>
+                        <td>${elo}</td>
+                        <td>${item.sts.score} / ${item.sts.total}</td>
+                        <td><progress value="${item.sts.progress}" max="1"></progress></td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+
+            contentElement.appendChild(table);
+        }
+    </script>
+</body>
+</html>

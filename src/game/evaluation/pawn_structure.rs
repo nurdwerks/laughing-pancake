@@ -1,17 +1,15 @@
 // src/game/evaluation/pawn_structure.rs
 
-use shakmaty::{Board, Color, Piece, Role, Bitboard, File, Rank};
+use shakmaty::{Board, Color, Piece, Role, Bitboard, File};
 use crate::game::search::SearchConfig;
 use super::advanced_pawn_structure;
 
 pub fn evaluate(board: &Board, color: Color, config: &SearchConfig) -> i32 {
     let mut score = 0;
     let our_pawns = board.by_piece(Piece { role: Role::Pawn, color });
-    let their_pawns = board.by_piece(Piece { role: Role::Pawn, color: !color });
 
     score -= count_doubled_pawns(our_pawns) * config.doubled_pawn_weight / 100;
     score -= count_isolated_pawns(our_pawns) * config.isolated_pawn_weight / 100;
-    score += count_passed_pawns(color, our_pawns, their_pawns) * config.passed_pawn_weight / 100;
 
     // Add scores from advanced pawn structure analysis
     score += advanced_pawn_structure::evaluate_pawn_chains(board, color) * config.pawn_chain_weight / 100;
@@ -48,40 +46,4 @@ fn count_isolated_pawns(our_pawns: Bitboard) -> i32 {
         }
     }
     isolated_pawns
-}
-
-fn count_passed_pawns(color: Color, our_pawns: Bitboard, their_pawns: Bitboard) -> i32 {
-    let mut passed_pawns = 0;
-    for pawn_square in our_pawns {
-        let file_index = pawn_square.file() as usize;
-        let rank_index = pawn_square.rank() as usize;
-
-        let mut in_front_files = Bitboard::from_file(pawn_square.file());
-        if file_index > 0 {
-            in_front_files |= Bitboard::from_file(File::new((file_index - 1) as u32));
-        }
-        if file_index < 7 {
-            in_front_files |= Bitboard::from_file(File::new((file_index + 1) as u32));
-        }
-
-        let mut in_front_squares = Bitboard::EMPTY;
-        match color {
-            Color::White => {
-                for r in (rank_index + 1)..8 {
-                    in_front_squares |= Bitboard::from_rank(Rank::new(r as u32));
-                }
-            }
-            Color::Black => {
-                for r in 0..rank_index {
-                    in_front_squares |= Bitboard::from_rank(Rank::new(r as u32));
-                }
-            }
-        }
-
-        let enemy_pawns_in_front = their_pawns & in_front_files & in_front_squares;
-        if enemy_pawns_in_front.is_empty() {
-            passed_pawns += 1;
-        }
-    }
-    passed_pawns
 }

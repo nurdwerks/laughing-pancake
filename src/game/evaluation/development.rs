@@ -1,9 +1,7 @@
 // src/game/evaluation/development.rs
 
 use shakmaty::{Board, Color, Piece, Role, Square, Bitboard};
-
-const DEVELOPMENT_BONUS_MINOR: i32 = 10;
-const EARLY_QUEEN_MOVE_PENALTY: i32 = 15;
+use crate::constants::{DEVELOPMENT_BONUS_MINOR, EARLY_QUEEN_MOVE_PENALTY};
 
 pub fn evaluate(board: &Board, color: Color) -> i32 {
     let mut score = 0;

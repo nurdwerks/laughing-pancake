@@ -13,17 +13,15 @@ pub mod bishops;
 pub mod knights;
 pub mod threats;
 pub mod initiative;
+pub mod king_attack;
+pub mod passed_pawns;
+pub mod opponent_weakness;
 
 use shakmaty::{Board, Chess, Color, Piece, Position, Role};
-
-// Constants for game phase calculation
-const QUEEN_PHASE_VAL: i32 = 4;
-const ROOK_PHASE_VAL: i32 = 2;
-const BISHOP_PHASE_VAL: i32 = 1;
-const KNIGHT_PHASE_VAL: i32 = 1;
-
-const TOTAL_PHASE: i32 =
-    (QUEEN_PHASE_VAL * 2) + (ROOK_PHASE_VAL * 4) + (BISHOP_PHASE_VAL * 4) + (KNIGHT_PHASE_VAL * 4);
+use crate::constants::{
+    QUEEN_PHASE_VAL, ROOK_PHASE_VAL, BISHOP_PHASE_VAL, KNIGHT_PHASE_VAL, TOTAL_PHASE,
+    PAWN_VALUE, KNIGHT_VALUE, BISHOP_VALUE, ROOK_VALUE, QUEEN_VALUE
+};
 
 /// Calculates the game phase.
 ///
@@ -46,13 +44,6 @@ fn game_phase(board: &Board) -> i32 {
     let current_phase_value = current_phase_value.min(TOTAL_PHASE);
     (current_phase_value * 256 + (TOTAL_PHASE / 2)) / TOTAL_PHASE
 }
-
-// --- Piece values ---
-const PAWN_VALUE: i32 = 100;
-const KNIGHT_VALUE: i32 = 320;
-const BISHOP_VALUE: i32 = 330;
-const ROOK_VALUE: i32 = 500;
-const QUEEN_VALUE: i32 = 900;
 
 pub fn get_piece_value(role: Role) -> i32 {
     match role {
@@ -135,7 +126,10 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         + config.knight_placement_weight
         + config.threat_analysis_weight
         + config.space_evaluation_weight
-        + config.initiative_evaluation_weight;
+        + config.initiative_evaluation_weight
+        + config.enhanced_king_attack_weight
+        + config.advanced_passed_pawn_weight
+        + config.opponent_weakness_weight;
 
     if total_weight > 0 {
         white_score += pawn_structure::evaluate(board, Color::White, config) * config.pawn_structure_weight / total_weight;
@@ -167,6 +161,15 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
 
         white_score += initiative::evaluate(board, Color::White) * config.initiative_evaluation_weight / total_weight;
         black_score += initiative::evaluate(board, Color::Black) * config.initiative_evaluation_weight / total_weight;
+
+        white_score += king_attack::evaluate(pos, Color::White) * config.enhanced_king_attack_weight / total_weight;
+        black_score += king_attack::evaluate(pos, Color::Black) * config.enhanced_king_attack_weight / total_weight;
+
+        white_score += passed_pawns::evaluate(board, Color::White) * config.advanced_passed_pawn_weight / total_weight;
+        black_score += passed_pawns::evaluate(board, Color::Black) * config.advanced_passed_pawn_weight / total_weight;
+
+        white_score += opponent_weakness::evaluate(pos, Color::White) * config.opponent_weakness_weight / total_weight;
+        black_score += opponent_weakness::evaluate(pos, Color::Black) * config.opponent_weakness_weight / total_weight;
     }
 
     let total_score = white_score - black_score;
@@ -178,7 +181,14 @@ pub fn evaluate(pos: &Chess, config: &SearchConfig) -> i32 {
         -total_score
     };
 
-    perspective_score + config.tempo_bonus_weight
+    let final_score = perspective_score + config.tempo_bonus_weight;
+
+    // Apply contempt factor conditionally
+    if final_score.abs() < config.draw_avoidance_margin {
+        final_score - config.contempt_factor
+    } else {
+        final_score
+    }
 }
 
 #[cfg(test)]

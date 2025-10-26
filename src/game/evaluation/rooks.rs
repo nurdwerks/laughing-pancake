@@ -1,10 +1,7 @@
 //! Evaluation terms for rooks.
 
 use shakmaty::{Board, Color, File, Piece, Role, Square, Bitboard};
-
-const OPEN_FILE_BONUS: i32 = 20;
-const SEMI_OPEN_FILE_BONUS: i32 = 10;
-const SEVENTH_RANK_BONUS: i32 = 25;
+use crate::constants::{ROOK_OPEN_FILE_BONUS, ROOK_SEMI_OPEN_FILE_BONUS, SEVENTH_RANK_BONUS};
 
 /// Evaluates the placement of rooks.
 pub fn evaluate(board: &Board, color: Color) -> i32 {
@@ -50,9 +47,9 @@ fn evaluate_file(board: &Board, color: Color, file: File) -> i32 {
 
     if !has_friendly_pawns {
         if !has_enemy_pawns {
-            OPEN_FILE_BONUS
+            ROOK_OPEN_FILE_BONUS
         } else {
-            SEMI_OPEN_FILE_BONUS
+            ROOK_SEMI_OPEN_FILE_BONUS
         }
     } else {
         0
