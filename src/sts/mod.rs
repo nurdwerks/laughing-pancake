@@ -12,7 +12,6 @@ use std::sync::Mutex;
 use std::{fs, io};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio::task;
 
 lazy_static! {
     static ref STS_LOCK: Mutex<bool> = Mutex::new(false);
@@ -130,73 +129,70 @@ impl StsRunner {
         }
         self.result.total_positions = all_positions.len();
 
-        let config = self.config.clone();
-        let mut result = self.result.clone();
+        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
 
-        // This task will manage the entire STS run, distributing jobs to the worker pool.
-        let handle = task::spawn(async move {
-            let (result_tx, mut result_rx) = mpsc::unbounded_channel();
-
-            // Enqueue a job for each position that hasn't been completed yet.
-            for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
-                if i < result.completed_positions {
-                    continue; // Skip already completed positions
-                }
-                let job = Job::EvaluateStsPosition {
-                    pos,
-                    best_move_san,
-                    config: config.clone(),
-                    result_tx: result_tx.clone(),
-                };
-                push_job(job);
+        // Enqueue a job for each position that hasn't been completed yet.
+        for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
+            if i < self.result.completed_positions {
+                continue; // Skip already completed positions
             }
-            // Drop the original sender so the receiver knows when all jobs are done.
-            drop(result_tx);
+            let job = Job::EvaluateStsPosition {
+                pos,
+                best_move_san,
+                config: self.config.clone(),
+                result_tx: result_tx.clone(),
+            };
+            push_job(job);
+        }
+        // Drop the original sender so the receiver knows when all jobs are done.
+        drop(result_tx);
 
-            // This loop collects results from the worker pool asynchronously.
-            while let Some(is_correct) = result_rx.recv().await {
-                if is_correct {
-                    result.correct_moves += 1;
-                }
-                result.completed_positions += 1;
-
-                let progress = result.completed_positions as f64 / result.total_positions as f64;
-                EVENT_BROKER.publish(Event::StsUpdate(StsUpdate {
-                    config_hash: result.config_hash,
-                    progress,
-                    score: result.correct_moves,
-                    total: result.total_positions,
-                    elo: None,
-                }));
-
-                // Save progress every 10 positions
-                if result.completed_positions % 10 == 0 {
-                    let json = serde_json::to_string_pretty(&result).unwrap();
-                    fs::write(&result_path, &json).expect("Failed to save STS result");
-                }
+        // This loop collects results from the worker pool asynchronously.
+        while let Some(is_correct) = result_rx.recv().await {
+            if is_correct {
+                self.result.correct_moves += 1;
             }
+            self.result.completed_positions += 1;
 
-            // Finalize and save the result
-            let score_percentage = (result.correct_moves as f64 / result.total_positions as f64) * 100.0;
-            result.elo = Some(44.523 * score_percentage - 242.85);
-
+            let progress =
+                self.result.completed_positions as f64 / self.result.total_positions as f64;
             EVENT_BROKER.publish(Event::StsUpdate(StsUpdate {
-                config_hash: result.config_hash,
-                progress: 1.0,
-                score: result.correct_moves,
-                total: result.total_positions,
-                elo: result.elo,
+                config_hash: self.result.config_hash,
+                progress,
+                score: self.result.correct_moves,
+                total: self.result.total_positions,
+                elo: None,
             }));
 
-            let json = serde_json::to_string_pretty(&result).unwrap();
-            fs::write(&result_path, json).expect("Failed to save final STS result");
+            // Save progress every 10 positions
+            if self.result.completed_positions % 10 == 0 {
+                let json = serde_json::to_string_pretty(&self.result).unwrap();
+                fs::write(&result_path, &json).expect("Failed to save STS result");
+            }
+        }
 
-            println!("STS run completed for config hash: {}", result.config_hash);
+        // Finalize and save the result
+        let score_percentage =
+            (self.result.correct_moves as f64 / self.result.total_positions as f64) * 100.0;
+        self.result.elo = Some(44.523 * score_percentage - 242.85);
 
-            result
-        });
+        EVENT_BROKER.publish(Event::StsUpdate(StsUpdate {
+            config_hash: self.result.config_hash,
+            progress: 1.0,
+            score: self.result.correct_moves,
+            total: self.result.total_positions,
+            elo: self.result.elo,
+        }));
 
-        handle.await.ok()
+        let json = serde_json::to_string_pretty(&self.result).unwrap();
+        fs::write(result_path, json).expect("Failed to save final STS result");
+
+        println!(
+            "STS run completed for config hash: {}",
+            self.result.config_hash
+        );
+
+        Some(self.result.clone())
     }
 }
 
