@@ -1,17 +1,17 @@
 // src/sts/mod.rs
 
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
-use crate::game::search::SearchConfig;
-use crate::worker::{push_job, Job};
+use crate::game::search::evaluation_cache::EvaluationCache;
+use crate::game::search::{PvsSearcher, SearchConfig, Searcher};
 use lazy_static::lazy_static;
-use shakmaty::Chess;
+use shakmaty::{san::San, Chess};
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::{fs, io};
-use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::{fs};
 
 lazy_static! {
     static ref STS_LOCK: Mutex<bool> = Mutex::new(false);
@@ -129,26 +129,23 @@ impl StsRunner {
         }
         self.result.total_positions = all_positions.len();
 
-        let (result_tx, mut result_rx) = mpsc::unbounded_channel();
+        let mut searcher =
+            PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
 
-        // Enqueue a job for each position that hasn't been completed yet.
         for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
             if i < self.result.completed_positions {
                 continue; // Skip already completed positions
             }
-            let job = Job::EvaluateStsPosition {
-                pos,
-                best_move_san,
-                config: self.config.clone(),
-                result_tx: result_tx.clone(),
-            };
-            push_job(job);
-        }
-        // Drop the original sender so the receiver knows when all jobs are done.
-        drop(result_tx);
 
-        // This loop collects results from the worker pool asynchronously.
-        while let Some(is_correct) = result_rx.recv().await {
+            let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config);
+
+            let is_correct = if let Some(m) = best_move {
+                let san = San::from_move(&pos, m);
+                san.to_string() == best_move_san
+            } else {
+                false
+            };
+
             if is_correct {
                 self.result.correct_moves += 1;
             }

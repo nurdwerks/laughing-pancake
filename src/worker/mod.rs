@@ -6,10 +6,10 @@ use crate::game::search::{PvsSearcher, Searcher};
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
 use serde::Serialize;
-use shakmaty::{san::San, Chess, Move};
+use shakmaty::{Chess, Move};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone, Serialize)]
 pub enum Status {
@@ -32,14 +32,6 @@ pub enum Job {
         config: SearchConfig,
         // Channel to send the result (best move, score, search tree) back.
         result_tx: oneshot::Sender<(Option<Move>, i32, Option<MoveTreeNode>)>,
-    },
-    /// A job to evaluate a single position from the Strategic Test Suite (STS).
-    EvaluateStsPosition {
-        pos: Chess,
-        best_move_san: String,
-        config: SearchConfig,
-        // Channel to send the boolean result (correct move or not) back.
-        result_tx: mpsc::UnboundedSender<bool>,
     },
 }
 
@@ -96,23 +88,6 @@ impl WorkerPool {
                             let (best_move, score, tree) =
                                 searcher.search(&pos, config.search_depth, &config);
                             let _ = result_tx.send((best_move, score, tree));
-                        }
-                        Job::EvaluateStsPosition {
-                            pos,
-                            best_move_san,
-                            config,
-                            result_tx,
-                        } => {
-                            let (best_move, _, _) =
-                                searcher.search(&pos, config.search_depth, &config);
-
-                            let is_correct = if let Some(m) = best_move {
-                                let san = San::from_move(&pos, m);
-                                san.to_string() == best_move_san
-                            } else {
-                                false
-                            };
-                            let _ = result_tx.send(is_correct);
                         }
                     }
 
