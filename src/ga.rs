@@ -1368,7 +1368,7 @@ fn parse_id_from_name(name: &str) -> usize {
 /// Creates a new SearchConfig by randomly selecting parameters from two parents.
 fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
     SearchConfig {
-        search_depth: (if rng.gen_bool(0.5) { p1.search_depth } else { p2.search_depth }).clamp(3, 5),
+        search_depth: (if rng.gen_bool(0.5) { p1.search_depth } else { p2.search_depth }).clamp(15, 20),
         search_algorithm: SearchAlgorithm::Pvs,
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
@@ -1417,7 +1417,7 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
         } else {
             config.search_depth = config.search_depth.saturating_sub(1);
         }
-        config.search_depth = config.search_depth.clamp(3, 5);
+        config.search_depth = config.search_depth.clamp(15, 20);
     }
     // Mutate booleans with a 3% chance
     if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }

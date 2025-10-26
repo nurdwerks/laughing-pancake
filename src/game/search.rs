@@ -67,7 +67,7 @@ impl SearchConfig {
         let mut config = Self::default();
         let default_config = Self::default(); // for reference values
 
-        config.search_depth = rng.gen_range(3..=5);
+        config.search_depth = rng.gen_range(15..=20);
 
         // Randomize booleans
         config.use_aspiration_windows = rng.gen_bool(0.5);
