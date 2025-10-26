@@ -76,7 +76,10 @@ pub async fn start_server(mock_scenario: Option<String>) -> std::io::Result<()> 
                         web::get().to(get_individual_details),
                     )
                     .route("/sts/run/{gen_id}/{ind_id}", web::post().to(run_sts_test))
-                    .route("/sts/result/{config_hash}", web.get().to(get_sts_result))
+                    .route(
+                        "/sts/result/{config_hash}",
+                        web::get().to(get_sts_result),
+                    )
                     .route("/selection_mode", web::get().to(get_selection_mode))
                     .route("/selection_mode", web::post().to(set_selection_mode)),
             )

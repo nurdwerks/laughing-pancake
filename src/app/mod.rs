@@ -60,12 +60,11 @@ pub struct App {
     // Websocket state
     git_hash: String,
     // Mocking
-    mock_scenario: Option<String>,
 }
 
 impl App {
     #[cfg_attr(test, allow(dead_code))]
-    pub fn new(git_hash: String, args: crate::Args) -> Self {
+    pub fn new(git_hash: String, _args: crate::Args) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
 
@@ -94,7 +93,6 @@ impl App {
             // Websocket state
             git_hash,
             // Mocking
-            mock_scenario: args.mock_scenario,
         }
     }
 
