@@ -63,9 +63,9 @@ impl StsRunner {
     pub async fn run(&mut self) -> Option<StsResult> {
         {
             let mut running_tests = RUNNING_STS_TESTS.lock().unwrap();
-            if running_tests.contains(&self.config_hash) {
+            if !running_tests.is_empty() {
                 println!(
-                    "STS run for config hash {} is already in progress.",
+                    "An STS run is already in progress. Skipping run for config hash {}.",
                     self.config_hash
                 );
                 return None;
