@@ -34,6 +34,7 @@
     <div id="buttons">
         <a href="history.html" class="button-link">View History</a>
         <a href="sts.html" class="button-link">STS Dashboard</a>
+        <button id="toggle_selection_mode">Loading...</button>
         <button id="force_quit">Force Quit</button>
         <button id="reset_simulation">Reset Simulation</button>
     </div>
@@ -91,6 +92,45 @@
                     ws.send('reset_simulation');
                 }
             };
+
+            // Selection mode logic
+            const selectionModeButton = document.getElementById('toggle_selection_mode');
+            let currentSelectionMode;
+
+            async function fetchSelectionMode() {
+                try {
+                    const response = await fetch('/api/selection_mode');
+                    const config = await response.json();
+                    currentSelectionMode = config.selection_algorithm;
+                    updateSelectionModeButton();
+                } catch (error) {
+                    console.error('Error fetching selection mode:', error);
+                    selectionModeButton.textContent = 'Error';
+                }
+            }
+
+            function updateSelectionModeButton() {
+                selectionModeButton.textContent = `Next Gen: ${currentSelectionMode === 'StsScore' ? 'STS Score' : 'Swiss'}`;
+            }
+
+            selectionModeButton.onclick = async () => {
+                const newMode = currentSelectionMode === 'StsScore' ? 'SwissTournament' : 'StsScore';
+                try {
+                    await fetch('/api/selection_mode', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ selection_algorithm: newMode }),
+                    });
+                    currentSelectionMode = newMode;
+                    updateSelectionModeButton();
+                } catch (error) {
+                    console.error('Error updating selection mode:', error);
+                }
+            };
+
+            fetchSelectionMode();
         }
 
         connect();

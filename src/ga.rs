@@ -16,10 +16,42 @@ use crate::constants::{NUM_ROUNDS, STARTING_ELO, POPULATION_SIZE, MUTATION_CHANC
 use crate::event::{Event, MatchResult, EVENT_BROKER, SelectionAlgorithm};
 use crate::game::search::{evaluation_cache::EvaluationCache, SearchAlgorithm, SearchConfig};
 use crate::sts::{StsResult, StsRunner};
-use crate::worker::{push_job, Job};
-use tokio::sync::{mpsc, oneshot, Semaphore};
+use std::io;
 
 const EVOLUTION_DIR: &str = "evolution";
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SelectionModeConfig {
+    pub selection_algorithm: SelectionAlgorithm,
+}
+
+impl SelectionModeConfig {
+    fn path() -> PathBuf {
+        Path::new(EVOLUTION_DIR).join("selection_mode.json")
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        let json = serde_json::to_string_pretty(self).unwrap();
+        fs::write(Self::path(), json)
+    }
+
+    pub fn load() -> Self {
+        let path = Self::path();
+        if path.exists() {
+            if let Ok(json) = fs::read_to_string(&path) {
+                if let Ok(config) = serde_json::from_str(&json) {
+                    return config;
+                }
+            }
+        }
+        // Return default if file doesn't exist or is corrupt
+        Self {
+            selection_algorithm: SelectionAlgorithm::StsScore,
+        }
+    }
+}
+use crate::worker::{push_job, Job};
+use tokio::sync::{mpsc, oneshot, Semaphore};
 
 /// Loads the configuration for the current generation, creating it if it doesn't exist.
 /// The selection algorithm is determined by the generation number.
@@ -37,17 +69,10 @@ fn load_or_create_config_for_current_generation(
         }
     }
 
-    // Config doesn't exist, so create it based on the generation index.
-    let selection_algorithm = if generation_index % 2 == 0 {
-        // Even generations (0, 2, ...) are for STS evaluation.
-        SelectionAlgorithm::StsScore
-    } else {
-        // Odd generations (1, 3, ...) are for Swiss Tournaments.
-        SelectionAlgorithm::SwissTournament
-    };
-
+    // Config doesn't exist, so create it based on the centrally-managed selection mode.
+    let selection_mode_config = SelectionModeConfig::load();
     let new_config = GenerationConfig {
-        selection_algorithm,
+        selection_algorithm: selection_mode_config.selection_algorithm,
     };
 
     let json = serde_json::to_string_pretty(&new_config).unwrap();
