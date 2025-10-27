@@ -6,7 +6,7 @@ use crate::game::search::{MoveTreeNode, SearchConfig, Searcher, MctsCache, MctsN
 use shakmaty::{Chess, Move, Position, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MctsStats {
@@ -57,10 +57,7 @@ impl MctsSearcher {
         config: &SearchConfig,
     ) -> (Option<Move>, i32, MoveTreeNode, MctsStats) {
         let fen = shakmaty::fen::Fen::from_position(pos, EnPassantMode::Legal);
-        println!(
-            "MCTS evaluation started for position: {}",
-            fen.to_string()
-        );
+        println!("MCTS evaluation started for position: {fen}");
 
         if pos.is_game_over() {
             println!("MCTS task finished: Game is already over.");
@@ -80,11 +77,8 @@ impl MctsSearcher {
         let mut root = Node::new(pos, None, Arc::clone(&self.mcts_cache));
         let mut stats = MctsStats::default();
         let start_time = Instant::now();
-        let time_limit = Duration::from_secs(60);
 
-        let mut iteration_count = 0;
-        while start_time.elapsed() < time_limit {
-            iteration_count += 1;
+        for iteration_count in 0..config.mcts_simulations {
             if iteration_count % 10000 == 0 {
                 let best_child = root.children.iter().max_by(|a, b| a.visits.cmp(&b.visits));
                 let best_move_san = best_child
@@ -184,10 +178,7 @@ impl MctsSearcher {
             root.update_cache(pos);
 
             let san_move = shakmaty::san::SanPlus::from_move(pos.clone(), best_move);
-            println!(
-                "MCTS task finished: Best move found: {}",
-                san_move.to_string()
-            );
+            println!("MCTS task finished: Best move found: {san_move}");
 
             (Some(best_move), score, final_tree, stats)
         } else {
