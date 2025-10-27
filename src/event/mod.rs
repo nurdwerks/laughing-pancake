@@ -120,6 +120,7 @@ pub enum Event {
     MatchStarted(usize, String, String),
     MatchCompleted(usize, MatchResult),
     ThinkingUpdate(usize, String, i32),
+    SearchStats(usize, String),
     MovePlayed(usize, String, i32, Chess),
     StatusUpdate(String),
     LogUpdate(String),

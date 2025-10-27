@@ -1077,9 +1077,12 @@ fn generate_pairings(&self, generation: &mut Generation, round: u32) -> Vec<Matc
             push_job(job);
 
             // Await the result from the worker.
-            if let Ok((best_move, eval, _final_tree)) = result_rx.await {
+            if let Ok((best_move, eval, _final_tree, stats_string)) = result_rx.await {
                 let thinking_done_msg = format!("AI finished thinking for {:?}...", pos.turn());
                 EVENT_BROKER.publish(Event::ThinkingUpdate(match_id, thinking_done_msg, eval));
+                if let Some(stats) = stats_string {
+                    EVENT_BROKER.publish(Event::SearchStats(match_id, stats));
+                }
 
                 if let Some(m) = best_move {
                     let san = SanPlus::from_move(pos.clone(), m);
@@ -1369,7 +1372,7 @@ fn parse_id_from_name(name: &str) -> usize {
 fn crossover(p1: &SearchConfig, p2: &SearchConfig, rng: &mut impl Rng) -> SearchConfig {
     SearchConfig {
         search_depth: (if rng.gen_bool(0.5) { p1.search_depth } else { p2.search_depth }).clamp(15, 20),
-        search_algorithm: SearchAlgorithm::Pvs,
+        search_algorithm: SearchAlgorithm::Mcts,
         use_aspiration_windows: if rng.gen_bool(0.5) { p1.use_aspiration_windows } else { p2.use_aspiration_windows },
         use_history_heuristic: if rng.gen_bool(0.5) { p1.use_history_heuristic } else { p2.use_history_heuristic },
         use_killer_moves: if rng.gen_bool(0.5) { p1.use_killer_moves } else { p2.use_killer_moves },
@@ -1419,6 +1422,7 @@ fn mutate(config: &mut SearchConfig, rng: &mut impl Rng) {
         }
         config.search_depth = config.search_depth.clamp(15, 20);
     }
+    config.search_algorithm = SearchAlgorithm::Mcts;
     // Mutate booleans with a 3% chance
     if rng.gen_bool(0.03) { config.use_aspiration_windows = !config.use_aspiration_windows; }
     if rng.gen_bool(0.03) { config.use_history_heuristic = !config.use_history_heuristic; }

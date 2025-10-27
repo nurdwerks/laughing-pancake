@@ -6,6 +6,22 @@ use crate::game::search::{MoveTreeNode, SearchConfig, Searcher, MctsCache, MctsN
 use shakmaty::{Chess, Move, Position, EnPassantMode};
 use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, Copy)]
+pub struct MctsStats {
+    pub max_depth: u32,
+    pub branches_evaluated: u32,
+}
+
+impl Default for MctsStats {
+    fn default() -> Self {
+        Self {
+            max_depth: 0,
+            branches_evaluated: 0,
+        }
+    }
+}
 
 pub struct MctsSearcher {
     mcts_cache: Arc<Mutex<MctsCache>>,
@@ -33,20 +49,22 @@ impl Searcher for MctsSearcher {
         config: &SearchConfig,
         _build_tree: bool,
         _verbose: bool,
-    ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
-        let (best_move, score, final_tree) = self.mcts(pos, config.mcts_simulations, config);
-        (best_move, score, Some(final_tree))
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>, Option<String>) {
+        let (best_move, score, final_tree, stats) = self.mcts(pos, config);
+        let stats_string = format!(
+            "MCTS Stats: Max Depth={}, Branches Evaluated={}",
+            stats.max_depth, stats.branches_evaluated
+        );
+        (best_move, score, Some(final_tree), Some(stats_string))
     }
-
 }
 
 impl MctsSearcher {
     fn mcts(
         &self,
         pos: &Chess,
-        simulations: u32,
         config: &SearchConfig,
-    ) -> (Option<Move>, i32, MoveTreeNode) {
+    ) -> (Option<Move>, i32, MoveTreeNode, MctsStats) {
         if pos.is_game_over() {
             let score = evaluation::evaluate(pos, config);
             return (
@@ -57,12 +75,16 @@ impl MctsSearcher {
                     score,
                     children: vec![],
                 },
+                MctsStats::default(),
             );
         }
 
         let mut root = Node::new(pos.clone(), None, Arc::clone(&self.mcts_cache));
+        let mut stats = MctsStats::default();
+        let start_time = Instant::now();
+        let time_limit = Duration::from_secs(60);
 
-        for _ in 0..simulations {
+        while start_time.elapsed() < time_limit {
             let mut path_indices = Vec::new();
 
             // Selection
@@ -100,7 +122,6 @@ impl MctsSearcher {
                 node_to_sim = &mut node_to_sim.children[random_child_idx];
             }
 
-
             // Simulation
             let mut sim_pos = node_to_sim.pos.clone();
             let mut sim_depth = 0;
@@ -127,6 +148,8 @@ impl MctsSearcher {
                 node_to_update.visits += 1;
                 node_to_update.wins += win_prob;
             }
+            stats.branches_evaluated += 1;
+            stats.max_depth = stats.max_depth.max(path_indices.len() as u32);
         }
 
         let best_child = root
@@ -134,8 +157,14 @@ impl MctsSearcher {
             .iter()
             .max_by(|a, b| a.visits.cmp(&b.visits));
 
-        if best_child.is_none() {
-             return (
+        if let Some(best_child) = best_child {
+            let best_move = best_child.parent_move.unwrap();
+            let final_tree = root.to_move_tree_node();
+            let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
+            root.update_cache();
+            (Some(best_move), score, final_tree, stats)
+        } else {
+            (
                 None,
                 0,
                 MoveTreeNode {
@@ -143,18 +172,9 @@ impl MctsSearcher {
                     score: 0,
                     children: vec![],
                 },
-            );
+                stats,
+            )
         }
-        let best_child = best_child.unwrap();
-
-
-        let best_move = best_child.parent_move.unwrap();
-        let final_tree = root.to_move_tree_node();
-        let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
-
-        root.update_cache();
-
-        (Some(best_move), score, final_tree)
     }
 }
 

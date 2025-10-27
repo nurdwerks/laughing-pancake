@@ -202,6 +202,10 @@ impl App {
                         match_state.eval = eval;
                     }
                 }
+                Event::SearchStats(match_id, stats) => {
+                    let log_message = format!("M {}: {}", match_id, stats);
+                    EVENT_BROKER.publish(Event::LogUpdate(log_message));
+                }
                 Event::MovePlayed(match_id, san, material, board) => {
                     if let Some(match_state) = self.active_matches.get_mut(&match_id) {
                         match_state.san.push_str(&format!("{san} "));
