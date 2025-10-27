@@ -8,19 +8,10 @@ use shakmaty::zobrist::ZobristHash;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MctsStats {
     pub max_depth: u32,
     pub branches_evaluated: u32,
-}
-
-impl Default for MctsStats {
-    fn default() -> Self {
-        Self {
-            max_depth: 0,
-            branches_evaluated: 0,
-        }
-    }
 }
 
 pub struct MctsSearcher {
@@ -79,13 +70,14 @@ impl MctsSearcher {
             );
         }
 
-        let mut root = Node::new(pos.clone(), None, Arc::clone(&self.mcts_cache));
+        let mut root = Node::new(pos, None, Arc::clone(&self.mcts_cache));
         let mut stats = MctsStats::default();
         let start_time = Instant::now();
         let time_limit = Duration::from_secs(60);
 
         while start_time.elapsed() < time_limit {
             let mut path_indices = Vec::new();
+            let mut current_pos = pos.clone();
 
             // Selection
             let mut current_node = &root;
@@ -97,42 +89,47 @@ impl MctsSearcher {
                     .max_by(|(_, a), (_, b)| {
                         let a_ucb1 = a.ucb1(current_node.visits);
                         let b_ucb1 = b.ucb1(current_node.visits);
-                        a_ucb1.partial_cmp(&b_ucb1).unwrap()
+                        a_ucb1.partial_cmp(&b_ucb1).unwrap_or(std::cmp::Ordering::Equal)
                     })
                     .map(|(i, _)| i)
-                    .unwrap();
+                    .unwrap(); // This is safe because we handle the None case in expand
                 path_indices.push(best_child_idx);
                 current_node = &current_node.children[best_child_idx];
             }
 
             // Expansion
-            let mut leaf_node = &mut root;
+            let mut leaf_node_mut = &mut root;
             for &idx in &path_indices {
-                leaf_node = &mut leaf_node.children[idx];
+                let child_move = leaf_node_mut.children[idx].parent_move.unwrap();
+                current_pos.play_unchecked(child_move);
+                leaf_node_mut = &mut leaf_node_mut.children[idx];
             }
 
-            if leaf_node.visits > 0 {
-                leaf_node.expand();
+            if leaf_node_mut.visits > 0 {
+                leaf_node_mut.expand(&current_pos);
             }
 
-            let mut node_to_sim = leaf_node;
-            if !node_to_sim.children.is_empty() {
-                let random_child_idx = rand::random::<usize>() % node_to_sim.children.len();
+            let (sim_start_pos, _node_to_sim) = if !leaf_node_mut.children.is_empty() {
+                let random_child_idx = rand::random::<usize>() % leaf_node_mut.children.len();
                 path_indices.push(random_child_idx);
-                node_to_sim = &mut node_to_sim.children[random_child_idx];
-            }
+                let child_node = &leaf_node_mut.children[random_child_idx];
+                let mut sim_pos = current_pos.clone();
+                sim_pos.play_unchecked(child_node.parent_move.unwrap());
+                (sim_pos, child_node)
+            } else {
+                (current_pos, &*leaf_node_mut)
+            };
 
             // Simulation
-            let mut sim_pos = node_to_sim.pos.clone();
+            let mut sim_pos = sim_start_pos;
             let mut sim_depth = 0;
             while !sim_pos.is_game_over() && sim_depth < 10 {
                 let moves = sim_pos.legal_moves();
-                if moves.is_empty() { break; }
-                if let Some(m) = moves.get(rand::random::<usize>() % moves.len()) {
-                    sim_pos.play_unchecked(*m);
-                } else {
+                if moves.is_empty() {
                     break;
                 }
+                let m = &moves[rand::random::<usize>() % moves.len()];
+                sim_pos.play_unchecked(*m);
                 sim_depth += 1;
             }
 
@@ -159,9 +156,9 @@ impl MctsSearcher {
 
         if let Some(best_child) = best_child {
             let best_move = best_child.parent_move.unwrap();
-            let final_tree = root.to_move_tree_node();
+            let final_tree = root.to_move_tree_node(pos);
             let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
-            root.update_cache();
+            root.update_cache(pos);
             (Some(best_move), score, final_tree, stats)
         } else {
             (
@@ -180,7 +177,6 @@ impl MctsSearcher {
 
 #[derive(Debug, Clone)]
 struct Node {
-    pos: Chess,
     parent_move: Option<Move>,
     visits: u32,
     wins: f64,
@@ -189,7 +185,7 @@ struct Node {
 }
 
 impl Node {
-    fn new(pos: Chess, parent_move: Option<Move>, mcts_cache: Arc<Mutex<MctsCache>>) -> Self {
+    fn new(pos: &Chess, parent_move: Option<Move>, mcts_cache: Arc<Mutex<MctsCache>>) -> Self {
         let hash = pos.zobrist_hash::<crate::game::search::evaluation_cache::Zobrist64>(EnPassantMode::Legal);
         let (visits, wins) = {
             let cache = mcts_cache.lock().unwrap();
@@ -201,7 +197,6 @@ impl Node {
         };
 
         Self {
-            pos,
             parent_move,
             visits,
             wins,
@@ -214,21 +209,21 @@ impl Node {
         self.children.is_empty()
     }
 
-    fn expand(&mut self) {
+    fn expand(&mut self, pos: &Chess) {
         if !self.children.is_empty() {
             return;
         }
-        for m in self.pos.legal_moves() {
+        for m in pos.legal_moves() {
             if m.is_capture() {
                 if let Some(from) = m.from() {
-                    if see::see(self.pos.board(), from, m.to()) < 0 {
+                    if see::see(pos.board(), from, m.to()) < 0 {
                         continue; // Prune losing captures
                     }
                 }
             }
-            let mut new_pos = self.pos.clone();
+            let mut new_pos = pos.clone();
             new_pos.play_unchecked(m);
-            self.children.push(Node::new(new_pos, Some(m), Arc::clone(&self.mcts_cache)));
+            self.children.push(Node::new(&new_pos, Some(m), Arc::clone(&self.mcts_cache)));
         }
     }
 
@@ -241,27 +236,34 @@ impl Node {
         }
     }
 
-    fn to_move_tree_node(&self) -> MoveTreeNode {
+    fn to_move_tree_node(&self, parent_pos: &Chess) -> MoveTreeNode {
+        let mut current_pos = parent_pos.clone();
+        if let Some(m) = self.parent_move {
+            current_pos.play_unchecked(m);
+        }
+
         MoveTreeNode {
             move_san: self
                 .parent_move
-                .map(|m| shakmaty::san::SanPlus::from_move(self.pos.clone(), m).to_string())
+                .map(|m| shakmaty::san::SanPlus::from_move(parent_pos.clone(), m).to_string())
                 .unwrap_or_else(|| "root".to_string()),
             score: if self.visits > 0 { (self.wins / self.visits as f64 * 100.0) as i32 } else { 0 },
             children: self
                 .children
                 .iter()
-                .map(|c| c.to_move_tree_node())
+                .map(|c| c.to_move_tree_node(&current_pos))
                 .collect(),
         }
     }
 
-    fn update_cache(&self) {
+    fn update_cache(&self, pos: &Chess) {
         let mut cache = self.mcts_cache.lock().unwrap();
-        let hash = self.pos.zobrist_hash::<crate::game::search::evaluation_cache::Zobrist64>(EnPassantMode::Legal);
+        let hash = pos.zobrist_hash::<crate::game::search::evaluation_cache::Zobrist64>(EnPassantMode::Legal);
         cache.store(hash, MctsNodeData { visits: self.visits, wins: self.wins });
         for child in &self.children {
-            child.update_cache();
+            let mut new_pos = pos.clone();
+            new_pos.play_unchecked(child.parent_move.unwrap());
+            child.update_cache(&new_pos);
         }
     }
 }
