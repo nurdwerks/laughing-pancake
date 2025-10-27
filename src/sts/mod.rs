@@ -66,7 +66,6 @@ impl StsRunner {
         if result_path.exists() {
             if let Ok(json) = fs::read_to_string(&result_path) {
                 if let Ok(result) = serde_json::from_str::<StsResult>(&json) {
-                    // println!("Resuming STS run for config hash: {}", self.config_hash);
                     self.result = result;
                 }
             }
@@ -102,26 +101,31 @@ impl StsRunner {
                     continue; // Skip already completed positions
                 }
 
-                let _fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
-                // println!(
-                //     "[{}/{}] Evaluating FEN: {}",
-                //     self.result.completed_positions + 1,
-                //     self.result.total_positions,
-                //     fen
-                // );
+                let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
+                let (best_move, _, _) =
+                    searcher.search(&pos, self.config.search_depth, &self.config, false, false);
 
-                let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config, false, true);
-
-                let is_correct = if let Some(m) = best_move {
+                let (is_correct, move_san) = if let Some(m) = best_move {
                     let san = San::from_move(&pos, m);
-                    san.to_string() == best_move_san
+                    let san_str = san.to_string();
+                    (san_str == best_move_san, san_str)
                 } else {
-                    false
+                    (false, "None".to_string())
                 };
 
                 if is_correct {
                     self.result.correct_moves += 1;
                 }
+
+                println!(
+                    "[STS] [{}/{}] {} -> {} ({}) [{}]",
+                    self.result.completed_positions + 1,
+                    self.result.total_positions,
+                    fen,
+                    move_san,
+                    best_move_san,
+                    if is_correct { "Match" } else { "Fail" }
+                );
                 self.result.completed_positions += 1;
                 current_position_index += 1;
 
@@ -158,11 +162,6 @@ impl StsRunner {
 
         let json = serde_json::to_string_pretty(&self.result).unwrap();
         fs::write(result_path, json).expect("Failed to save final STS result");
-
-        // println!(
-        //     "STS run completed for config hash: {}",
-        //     self.result.config_hash
-        // );
 
         Some(self.result.clone())
     }

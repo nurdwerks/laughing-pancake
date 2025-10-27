@@ -434,19 +434,6 @@ impl PvsSearcher {
             let mut new_pos = params.pos.clone();
             new_pos.play_unchecked(m);
 
-            if params.verbose {
-                let san = SanPlus::from_move(params.pos.clone(), m);
-                let fen = shakmaty::fen::Fen::from_position(params.pos, EnPassantMode::Legal);
-                println!(
-                    "[{}] Evaluating move: {} ({}) alpha: {}, beta: {}. FEN: {}",
-                    params.ply,
-                    san,
-                    m,
-                    params.alpha,
-                    params.beta,
-                    fen
-                );
-            }
             let (score, child_node) = if i == 0 {
                  let next_params = PvsSearchParams {
                     pos: &new_pos,
@@ -616,12 +603,6 @@ impl PvsSearcher {
                 return 0;
             }
 
-            if verbose {
-                let san = SanPlus::from_move(pos.clone(), m);
-                println!(
-                    "[quiescence] Evaluating capture: {san} ({m}) alpha: {alpha}, beta: {beta}"
-                );
-            }
 
             let score = -self.quiescence_search(&new_pos, -beta, -alpha, config, verbose);
 
