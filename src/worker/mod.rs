@@ -115,7 +115,14 @@ impl WorkerPool {
                             let _ = result_tx.send(search_result);
                         }
                         Err(panic) => {
-                            println!("Worker thread panicked: {panic:?}");
+                            let panic_info = if let Some(s) = panic.downcast_ref::<&'static str>() {
+                                *s
+                            } else if let Some(s) = panic.downcast_ref::<String>() {
+                                &s[..]
+                            } else {
+                                "Box<dyn Any>"
+                            };
+                            println!("MCTS task errored: {panic_info}");
                             pvs_searcher = PvsSearcher::with_shared_cache(Arc::new(Mutex::new(
                                 EvaluationCache::new(),
                             )));
@@ -124,7 +131,7 @@ impl WorkerPool {
                                 None,
                                 0,
                                 None,
-                                Some(format!("Worker panicked: {panic:?}")),
+                                Some(format!("Worker panicked: {panic_info}")),
                             ));
                         }
                     }

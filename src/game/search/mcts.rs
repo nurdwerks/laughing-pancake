@@ -56,7 +56,14 @@ impl MctsSearcher {
         pos: &Chess,
         config: &SearchConfig,
     ) -> (Option<Move>, i32, MoveTreeNode, MctsStats) {
+        let fen = shakmaty::fen::Fen::from_position(pos, EnPassantMode::Legal);
+        println!(
+            "MCTS evaluation started for position: {}",
+            fen.to_string()
+        );
+
         if pos.is_game_over() {
+            println!("MCTS task finished: Game is already over.");
             let score = evaluation::evaluate(pos, config);
             return (
                 None,
@@ -159,8 +166,16 @@ impl MctsSearcher {
             let final_tree = root.to_move_tree_node(pos);
             let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
             root.update_cache(pos);
+
+            let san_move = shakmaty::san::SanPlus::from_move(pos.clone(), best_move);
+            println!(
+                "MCTS task finished: Best move found: {}",
+                san_move.to_string()
+            );
+
             (Some(best_move), score, final_tree, stats)
         } else {
+            println!("MCTS task finished: No best move found.");
             (
                 None,
                 0,
