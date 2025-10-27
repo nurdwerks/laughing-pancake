@@ -81,7 +81,7 @@ impl SearchConfig {
         config.use_delta_pruning = rng.gen_bool(0.5);
 
         // Randomize enum
-        config.search_algorithm = SearchAlgorithm::Mcts;
+        config.search_algorithm = SearchAlgorithm::Pvs;
 
         // Helper function for numeric randomization
         let mut vary_numeric = |value: i32| -> i32 {
