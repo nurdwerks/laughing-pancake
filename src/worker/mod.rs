@@ -1,8 +1,8 @@
 #![cfg_attr(test, allow(dead_code))]
 
-use crate::game::search::{MoveTreeNode, SearchConfig};
+use crate::game::search::{MoveTreeNode, SearchConfig, SearchAlgorithm};
 use crate::game::search::evaluation_cache::EvaluationCache;
-use crate::game::search::{PvsSearcher, Searcher};
+use crate::game::search::{mcts::MctsSearcher, PvsSearcher, Searcher};
 use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
 use serde::Serialize;
@@ -30,8 +30,8 @@ pub enum Job {
     FindBestMove {
         pos: Chess,
         config: SearchConfig,
-        // Channel to send the result (best move, score, search tree) back.
-        result_tx: oneshot::Sender<(Option<Move>, i32, Option<MoveTreeNode>)>,
+        // Channel to send the result (best move, score, search tree, stats) back.
+        result_tx: oneshot::Sender<(Option<Move>, i32, Option<MoveTreeNode>, Option<String>)>,
     },
 }
 
@@ -66,8 +66,9 @@ impl WorkerPool {
             let job_rx = JOB_QUEUE.1.clone();
 
             let _handle = thread::spawn(move || {
-                let mut searcher =
+                let mut pvs_searcher =
                     PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
+                let mut mcts_searcher = MctsSearcher::new();
 
                 while let Ok(job) = job_rx.recv() {
                     let job_description = format!("{job:?}");
@@ -85,9 +86,23 @@ impl WorkerPool {
                             config,
                             result_tx,
                         } => {
-                            let (best_move, score, tree) =
-                                searcher.search(&pos, config.search_depth, &config, true, false);
-                            let _ = result_tx.send((best_move, score, tree));
+                            let (best_move, score, tree, stats) = match config.search_algorithm {
+                                SearchAlgorithm::Pvs => pvs_searcher.search(
+                                    &pos,
+                                    config.search_depth,
+                                    &config,
+                                    true,
+                                    false,
+                                ),
+                                SearchAlgorithm::Mcts => mcts_searcher.search(
+                                    &pos,
+                                    config.search_depth,
+                                    &config,
+                                    true,
+                                    false,
+                                ),
+                            };
+                            let _ = result_tx.send((best_move, score, tree, stats));
                         }
                     }
 

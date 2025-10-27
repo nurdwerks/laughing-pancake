@@ -81,7 +81,7 @@ impl SearchConfig {
         config.use_delta_pruning = rng.gen_bool(0.5);
 
         // Randomize enum
-        config.search_algorithm = SearchAlgorithm::Pvs;
+        config.search_algorithm = SearchAlgorithm::Mcts;
 
         // Helper function for numeric randomization
         let mut vary_numeric = |value: i32| -> i32 {
@@ -185,7 +185,7 @@ pub trait Searcher: Send {
         config: &SearchConfig,
         build_tree: bool,
         verbose: bool,
-    ) -> (Option<Move>, i32, Option<MoveTreeNode>);
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>, Option<String>);
 }
 
 #[derive(Clone)]
@@ -203,13 +203,13 @@ impl Searcher for PvsSearcher {
         config: &SearchConfig,
         build_tree: bool,
         verbose: bool,
-    ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
+    ) -> (Option<Move>, i32, Option<MoveTreeNode>, Option<String>) {
         if !config.use_aspiration_windows {
             let args = PvsRootSearchArgs {
                 pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, build_tree, verbose
             };
             let (move_opt, score, tree) = self.pvs_root_search(args);
-            return (move_opt, score, Some(tree));
+            return (move_opt, score, Some(tree), None);
         }
 
         const ASPIRATION_WINDOW_DELTA: i32 = 50;
@@ -229,7 +229,7 @@ impl Searcher for PvsSearcher {
             (best_move, score, tree) = self.pvs_root_search(args);
         }
 
-        (best_move, score, Some(tree))
+        (best_move, score, Some(tree), None)
     }
 }
 
