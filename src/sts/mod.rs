@@ -1,15 +1,13 @@
 // src/sts/mod.rs
 
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
-use crate::game::search::evaluation_cache::EvaluationCache;
-use crate::game::search::{mcts::MctsSearcher, PvsSearcher, SearchAlgorithm, SearchConfig, Searcher};
+use crate::game::search::{mcts::MctsSearcher, SearchConfig, Searcher};
 use shakmaty::{san::San, Chess};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::{fs};
 
 
@@ -81,8 +79,6 @@ impl StsRunner {
 
         self.result.total_positions = epd_files.iter().map(|f| parse_epd(f).map(|p| p.len()).unwrap_or(0)).sum();
 
-        let mut pvs_searcher =
-            PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
         let mut mcts_searcher = MctsSearcher::new();
 
         let mut current_position_index = 0;
@@ -103,22 +99,13 @@ impl StsRunner {
                 }
 
                 let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
-                let (best_move, _, _, _) = match self.config.search_algorithm {
-                    SearchAlgorithm::Pvs => pvs_searcher.search(
-                        &pos,
-                        self.config.search_depth,
-                        &self.config,
-                        false,
-                        false,
-                    ),
-                    SearchAlgorithm::Mcts => mcts_searcher.search(
-                        &pos,
-                        self.config.search_depth,
-                        &self.config,
-                        false,
-                        false,
-                    ),
-                };
+                let (best_move, _, _, _) = mcts_searcher.search(
+                    &pos,
+                    self.config.search_depth,
+                    &self.config,
+                    false,
+                    false,
+                );
 
                 let (is_correct, move_san) = if let Some(m) = best_move {
                     let san = San::from_move(&pos, m);
