@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::oneshot;
 
+pub type SearchResult = (Option<Move>, i32, Option<MoveTreeNode>, Option<String>);
+
 #[derive(Debug, Clone, Serialize)]
 pub enum Status {
     Idle,
@@ -32,7 +34,7 @@ pub enum Job {
         pos: Chess,
         config: SearchConfig,
         // Channel to send the result (best move, score, search tree, stats) back.
-        result_tx: oneshot::Sender<(Option<Move>, i32, Option<MoveTreeNode>, Option<String>)>,
+        result_tx: oneshot::Sender<SearchResult>,
     },
 }
 

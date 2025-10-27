@@ -203,7 +203,7 @@ impl App {
                     }
                 }
                 Event::SearchStats(match_id, stats) => {
-                    let log_message = format!("M {}: {}", match_id, stats);
+                    let log_message = format!("M {match_id}: {stats}");
                     EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::MovePlayed(match_id, san, material, board) => {
