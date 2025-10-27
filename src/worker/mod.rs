@@ -105,7 +105,7 @@ impl WorkerPool {
                                 config.search_depth,
                                 &config,
                                 true,
-                                false,
+                                true,
                             ),
                         }
                     }));
