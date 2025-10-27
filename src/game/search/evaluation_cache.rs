@@ -2,7 +2,8 @@
 
 pub use shakmaty::zobrist::Zobrist64;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use crate::constants::EVALUATION_CACHE_SIZE;
 
 mod zobrist_serde {
     use serde::{self, Deserializer, Serializer, Deserialize};
@@ -34,13 +35,15 @@ pub struct CacheEntry {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvaluationCache {
     table: HashMap<u64, i32>,
+    order: VecDeque<u64>,
 }
 
 impl EvaluationCache {
     #[cfg_attr(test, allow(dead_code))]
     pub fn new() -> Self {
         Self {
-            table: HashMap::new(),
+            table: HashMap::with_capacity(EVALUATION_CACHE_SIZE),
+            order: VecDeque::with_capacity(EVALUATION_CACHE_SIZE),
         }
     }
 
@@ -49,6 +52,12 @@ impl EvaluationCache {
     }
 
     pub fn store(&mut self, entry: CacheEntry) {
+        if self.table.len() >= EVALUATION_CACHE_SIZE {
+            if let Some(oldest_hash) = self.order.pop_front() {
+                self.table.remove(&oldest_hash);
+            }
+        }
         self.table.insert(entry.hash.0, entry.score);
+        self.order.push_back(entry.hash.0);
     }
 }

@@ -120,36 +120,42 @@ impl StsRunner {
             }
         };
 
-        let mut all_positions = Vec::new();
-        for file in epd_files {
-            match parse_epd(&file) {
-                Ok(positions) => all_positions.extend(positions),
-                Err(e) => eprintln!("Error parsing EPD file {file:?}: {e}"),
-            }
-        }
-        self.result.total_positions = all_positions.len();
+        self.result.total_positions = epd_files.iter().map(|f| parse_epd(f).map(|p| p.len()).unwrap_or(0)).sum();
 
         let mut searcher =
             PvsSearcher::with_shared_cache(Arc::new(Mutex::new(EvaluationCache::new())));
 
-        for (i, (pos, best_move_san)) in all_positions.into_iter().enumerate() {
-            if i < self.result.completed_positions {
-                continue; // Skip already completed positions
-            }
+        let mut current_position_index = 0;
 
-            let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config);
-
-            let is_correct = if let Some(m) = best_move {
-                let san = San::from_move(&pos, m);
-                san.to_string() == best_move_san
-            } else {
-                false
+        for file in epd_files {
+            let positions = match parse_epd(&file) {
+                Ok(positions) => positions,
+                Err(e) => {
+                    eprintln!("Error parsing EPD file {file:?}: {e}");
+                    continue;
+                }
             };
 
-            if is_correct {
-                self.result.correct_moves += 1;
-            }
-            self.result.completed_positions += 1;
+            for (pos, best_move_san) in positions {
+                if current_position_index < self.result.completed_positions {
+                    current_position_index += 1;
+                    continue; // Skip already completed positions
+                }
+
+                let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config, false);
+
+                let is_correct = if let Some(m) = best_move {
+                    let san = San::from_move(&pos, m);
+                    san.to_string() == best_move_san
+                } else {
+                    false
+                };
+
+                if is_correct {
+                    self.result.correct_moves += 1;
+                }
+                self.result.completed_positions += 1;
+                current_position_index += 1;
 
             let progress =
                 self.result.completed_positions as f64 / self.result.total_positions as f64;
@@ -165,6 +171,7 @@ impl StsRunner {
             if self.result.completed_positions % 10 == 0 {
                 let json = serde_json::to_string_pretty(&self.result).unwrap();
                 fs::write(&result_path, &json).expect("Failed to save STS result");
+            }
             }
         }
 

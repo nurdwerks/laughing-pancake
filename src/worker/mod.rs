@@ -86,7 +86,7 @@ impl WorkerPool {
                             result_tx,
                         } => {
                             let (best_move, score, tree) =
-                                searcher.search(&pos, config.search_depth, &config);
+                                searcher.search(&pos, config.search_depth, &config, true);
                             let _ = result_tx.send((best_move, score, tree));
                         }
                     }
