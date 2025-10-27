@@ -171,6 +171,7 @@ impl App {
                         stats.average_elo,
                         stats.lowest_elo
                     );
+                    println!("{log_message}");
                     EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::MatchStarted(match_id, white_player, black_player) => {
@@ -195,6 +196,7 @@ impl App {
                         "M {}: {} vs {} ({})",
                         match_id, white_num, black_num, result.result
                     );
+                    println!("{log_message}");
                     EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::ThinkingUpdate(match_id, _pv, eval) => {
@@ -204,6 +206,7 @@ impl App {
                 }
                 Event::SearchStats(match_id, stats) => {
                     let log_message = format!("M {match_id}: {stats}");
+                    println!("{log_message}");
                     EVENT_BROKER.publish(Event::LogUpdate(log_message));
                 }
                 Event::MovePlayed(match_id, san, material, board) => {
@@ -214,6 +217,7 @@ impl App {
                     }
                 }
                 Event::StatusUpdate(message) => {
+                    println!("{message}");
                     EVENT_BROKER.publish(Event::LogUpdate(message));
                 }
                 Event::Panic(msg) => {
