@@ -39,9 +39,9 @@ impl Searcher for MctsSearcher {
         _depth: u8,
         config: &SearchConfig,
         _build_tree: bool,
-        _verbose: bool,
+        verbose: bool,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>, Option<String>) {
-        let (best_move, score, final_tree, stats) = self.mcts(pos, config);
+        let (best_move, score, final_tree, stats) = self.mcts(pos, config, verbose);
         let stats_string = format!(
             "MCTS Stats: Max Depth={}, Branches Evaluated={}",
             stats.max_depth, stats.branches_evaluated
@@ -55,12 +55,17 @@ impl MctsSearcher {
         &self,
         pos: &Chess,
         config: &SearchConfig,
+        verbose: bool,
     ) -> (Option<Move>, i32, MoveTreeNode, MctsStats) {
-        let fen = shakmaty::fen::Fen::from_position(pos, EnPassantMode::Legal);
-        println!("MCTS evaluation started for position: {fen}");
+        if verbose {
+            let fen = shakmaty::fen::Fen::from_position(pos, EnPassantMode::Legal);
+            println!("MCTS evaluation started for position: {fen}");
+        }
 
         if pos.is_game_over() {
-            println!("MCTS task finished: Game is already over.");
+            if verbose {
+                println!("MCTS task finished: Game is already over.");
+            }
             let score = evaluation::evaluate(pos, config);
             return (
                 None,
@@ -79,7 +84,7 @@ impl MctsSearcher {
         let start_time = Instant::now();
 
         for iteration_count in 0..config.mcts_simulations {
-            if iteration_count % 10000 == 0 {
+            if verbose && iteration_count % 10000 == 0 {
                 let best_child = root.children.iter().max_by(|a, b| a.visits.cmp(&b.visits));
                 let best_move_san = best_child
                     .and_then(|c| c.parent_move)
@@ -177,12 +182,16 @@ impl MctsSearcher {
             let score = (best_child.wins / best_child.visits as f64 * 100.0) as i32;
             root.update_cache(pos);
 
-            let san_move = shakmaty::san::SanPlus::from_move(pos.clone(), best_move);
-            println!("MCTS task finished: Best move found: {san_move}");
+            if verbose {
+                let san_move = shakmaty::san::SanPlus::from_move(pos.clone(), best_move);
+                println!("MCTS task finished: Best move found: {san_move}");
+            }
 
             (Some(best_move), score, final_tree, stats)
         } else {
-            println!("MCTS task finished: No best move found.");
+            if verbose {
+                println!("MCTS task finished: No best move found.");
+            }
             (
                 None,
                 0,
