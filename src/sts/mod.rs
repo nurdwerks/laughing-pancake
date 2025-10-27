@@ -3,7 +3,6 @@
 use crate::event::{Event, StsUpdate, EVENT_BROKER};
 use crate::game::search::evaluation_cache::EvaluationCache;
 use crate::game::search::{PvsSearcher, SearchConfig, Searcher};
-use lazy_static::lazy_static;
 use shakmaty::{san::San, Chess};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -13,34 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{fs};
 
-lazy_static! {
-    static ref STS_LOCK: Mutex<bool> = Mutex::new(false);
-}
-
-// A guard that releases the STS lock when it's dropped.
-struct StsLockGuard;
-
-impl Drop for StsLockGuard {
-    fn drop(&mut self) {
-        let mut lock = STS_LOCK.lock().unwrap();
-        *lock = false;
-        println!("Released STS lock.");
-    }
-}
-
-// Function to try to acquire the lock
-fn try_lock_sts() -> Option<StsLockGuard> {
-    let mut lock = STS_LOCK.lock().unwrap();
-    if *lock {
-        // Already locked
-        None
-    } else {
-        // Acquire the lock
-        *lock = true;
-        println!("Acquired STS lock.");
-        Some(StsLockGuard)
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StsResult {
@@ -85,17 +56,6 @@ impl StsRunner {
     }
 
     pub async fn run(&mut self) -> Option<StsResult> {
-        let _lock_guard = match try_lock_sts() {
-            Some(guard) => guard,
-            None => {
-                println!(
-                    "An STS run is already in progress. Skipping run for config hash {}.",
-                    self.config_hash
-                );
-                return None;
-            }
-        };
-
         let sts_dir = Path::new("sts");
         let results_dir = Path::new("sts_results");
         if !results_dir.exists() {
@@ -106,7 +66,7 @@ impl StsRunner {
         if result_path.exists() {
             if let Ok(json) = fs::read_to_string(&result_path) {
                 if let Ok(result) = serde_json::from_str::<StsResult>(&json) {
-                    println!("Resuming STS run for config hash: {}", self.config_hash);
+                    // println!("Resuming STS run for config hash: {}", self.config_hash);
                     self.result = result;
                 }
             }
@@ -142,13 +102,13 @@ impl StsRunner {
                     continue; // Skip already completed positions
                 }
 
-                let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
-                println!(
-                    "[{}/{}] Evaluating FEN: {}",
-                    self.result.completed_positions + 1,
-                    self.result.total_positions,
-                    fen
-                );
+                let _fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
+                // println!(
+                //     "[{}/{}] Evaluating FEN: {}",
+                //     self.result.completed_positions + 1,
+                //     self.result.total_positions,
+                //     fen
+                // );
 
                 let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config, false, true);
 
@@ -199,10 +159,10 @@ impl StsRunner {
         let json = serde_json::to_string_pretty(&self.result).unwrap();
         fs::write(result_path, json).expect("Failed to save final STS result");
 
-        println!(
-            "STS run completed for config hash: {}",
-            self.result.config_hash
-        );
+        // println!(
+        //     "STS run completed for config hash: {}",
+        //     self.result.config_hash
+        // );
 
         Some(self.result.clone())
     }

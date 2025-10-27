@@ -619,8 +619,7 @@ impl PvsSearcher {
             if verbose {
                 let san = SanPlus::from_move(pos.clone(), m);
                 println!(
-                    "[quiescence] Evaluating capture: {} ({}) alpha: {}, beta: {}",
-                    san, m, alpha, beta
+                    "[quiescence] Evaluating capture: {san} ({m}) alpha: {alpha}, beta: {beta}"
                 );
             }
 
@@ -629,7 +628,7 @@ impl PvsSearcher {
             if score >= beta {
                 if verbose {
                     let san = SanPlus::from_move(pos.clone(), m);
-                    println!("[quiescence] Beta cutoff on move {}: score ({}) >= beta ({}).", san, score, beta);
+                    println!("[quiescence] Beta cutoff on move {san}: score ({score}) >= beta ({beta}).");
                 }
                 return beta;
             }
@@ -654,8 +653,7 @@ impl PvsSearcher {
             if standing_pat - queen_value >= beta {
                 if verbose {
                     println!(
-                        "[delta] Delta Pruning: standing_pat ({}) - queen_value ({}) >= beta ({}).",
-                        standing_pat, queen_value, beta
+                        "[delta] Delta Pruning: standing_pat ({standing_pat}) - queen_value ({queen_value}) >= beta ({beta})."
                     );
                 }
                 return beta;
