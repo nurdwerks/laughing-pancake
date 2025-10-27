@@ -105,15 +105,12 @@ impl MctsSearcher {
                 leaf_node_mut = &mut leaf_node_mut.children[idx];
             }
 
-            let (sim_start_pos, _node_to_sim) = if leaf_node_mut.visits == 0 {
-                (current_pos, &*leaf_node_mut)
-            } else {
-                if !current_pos.is_game_over() {
-                    leaf_node_mut.expand(&current_pos);
-                }
+            if leaf_node_mut.visits != 0 && !current_pos.is_game_over() {
+                leaf_node_mut.expand(&current_pos);
+            }
 
-                if !leaf_node_mut.children.is_empty() {
-                    let random_child_idx = rand::random::<usize>() % leaf_node_mut.children.len();
+            let (sim_start_pos, _node_to_sim) = if !leaf_node_mut.children.is_empty() {
+                let random_child_idx = rand::random::<usize>() % leaf_node_mut.children.len();
                 path_indices.push(random_child_idx);
                 let child_node = &leaf_node_mut.children[random_child_idx];
                 let mut sim_pos = current_pos.clone();
