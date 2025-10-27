@@ -67,3 +67,6 @@ pub const MATE_SCORE: i32 = 1_000_000;
 
 // Match Settings
 pub const ENABLE_MOVE_LIMIT: bool = false;
+
+// Evaluation Cache
+pub const EVALUATION_CACHE_SIZE: usize = 1_000_000;

@@ -31,6 +31,7 @@ impl Searcher for MctsSearcher {
         pos: &Chess,
         _depth: u8,
         config: &SearchConfig,
+        _build_tree: bool,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         let (best_move, score, final_tree) = self.mcts(pos, config.mcts_simulations, config);
         (best_move, score, Some(final_tree))
