@@ -7,6 +7,7 @@ use crossbeam_channel::{Receiver, Sender};
 use lazy_static::lazy_static;
 use serde::Serialize;
 use shakmaty::{Chess, Move};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tokio::sync::oneshot;
@@ -80,29 +81,49 @@ impl WorkerPool {
                         }
                     }
 
-                    match job {
+                    let (pos, config, result_tx) = match job {
                         Job::FindBestMove {
                             pos,
                             config,
                             result_tx,
-                        } => {
-                            let (best_move, score, tree, stats) = match config.search_algorithm {
-                                SearchAlgorithm::Pvs => pvs_searcher.search(
-                                    &pos,
-                                    config.search_depth,
-                                    &config,
-                                    true,
-                                    false,
-                                ),
-                                SearchAlgorithm::Mcts => mcts_searcher.search(
-                                    &pos,
-                                    config.search_depth,
-                                    &config,
-                                    true,
-                                    false,
-                                ),
-                            };
-                            let _ = result_tx.send((best_move, score, tree, stats));
+                        } => (pos, config, result_tx),
+                    };
+
+                    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+                        match config.search_algorithm {
+                            SearchAlgorithm::Pvs => pvs_searcher.search(
+                                &pos,
+                                config.search_depth,
+                                &config,
+                                true,
+                                false,
+                            ),
+                            SearchAlgorithm::Mcts => mcts_searcher.search(
+                                &pos,
+                                config.search_depth,
+                                &config,
+                                true,
+                                false,
+                            ),
+                        }
+                    }));
+
+                    match result {
+                        Ok(search_result) => {
+                            let _ = result_tx.send(search_result);
+                        }
+                        Err(panic) => {
+                            println!("Worker thread panicked: {panic:?}");
+                            pvs_searcher = PvsSearcher::with_shared_cache(Arc::new(Mutex::new(
+                                EvaluationCache::new(),
+                            )));
+                            mcts_searcher = MctsSearcher::new();
+                            let _ = result_tx.send((
+                                None,
+                                0,
+                                None,
+                                Some(format!("Worker panicked: {panic:?}")),
+                            ));
                         }
                     }
 
