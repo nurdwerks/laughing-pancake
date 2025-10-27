@@ -82,7 +82,23 @@ impl MctsSearcher {
         let start_time = Instant::now();
         let time_limit = Duration::from_secs(60);
 
+        let mut iteration_count = 0;
         while start_time.elapsed() < time_limit {
+            iteration_count += 1;
+            if iteration_count % 10000 == 0 {
+                let best_child = root.children.iter().max_by(|a, b| a.visits.cmp(&b.visits));
+                let best_move_san = best_child
+                    .and_then(|c| c.parent_move)
+                    .map(|m| shakmaty::san::SanPlus::from_move(pos.clone(), m).to_string())
+                    .unwrap_or_else(|| "N/A".to_string());
+
+                println!(
+                    "MCTS Progress: Branches={}, Time={}s, Current Best Move={}",
+                    stats.branches_evaluated,
+                    start_time.elapsed().as_secs(),
+                    best_move_san
+                );
+            }
             let mut path_indices = Vec::new();
             let mut current_pos = pos.clone();
 
