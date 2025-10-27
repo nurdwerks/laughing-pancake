@@ -142,7 +142,15 @@ impl StsRunner {
                     continue; // Skip already completed positions
                 }
 
-                let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config, false);
+                let fen = shakmaty::fen::Fen::from_position(&pos, shakmaty::EnPassantMode::Legal);
+                println!(
+                    "[{}/{}] Evaluating FEN: {}",
+                    self.result.completed_positions + 1,
+                    self.result.total_positions,
+                    fen
+                );
+
+                let (best_move, _, _) = searcher.search(&pos, self.config.search_depth, &self.config, false, true);
 
                 let is_correct = if let Some(m) = best_move {
                     let san = San::from_move(&pos, m);

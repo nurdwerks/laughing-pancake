@@ -184,6 +184,7 @@ pub trait Searcher: Send {
         depth: u8,
         config: &SearchConfig,
         build_tree: bool,
+        verbose: bool,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>);
 }
 
@@ -201,10 +202,11 @@ impl Searcher for PvsSearcher {
         depth: u8,
         config: &SearchConfig,
         build_tree: bool,
+        verbose: bool,
     ) -> (Option<Move>, i32, Option<MoveTreeNode>) {
         if !config.use_aspiration_windows {
             let args = PvsRootSearchArgs {
-                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, build_tree
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, build_tree, verbose
             };
             let (move_opt, score, tree) = self.pvs_root_search(args);
             return (move_opt, score, Some(tree));
@@ -216,13 +218,13 @@ impl Searcher for PvsSearcher {
         let beta = score_guess + ASPIRATION_WINDOW_DELTA;
 
         let args = PvsRootSearchArgs {
-            pos, depth, config, alpha, beta, build_tree
+            pos, depth, config, alpha, beta, build_tree, verbose
         };
         let (mut best_move, mut score, mut tree) = self.pvs_root_search(args);
 
         if score <= alpha || score >= beta {
             let args = PvsRootSearchArgs {
-                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, build_tree
+                pos, depth, config, alpha: -MATE_SCORE, beta: MATE_SCORE, build_tree, verbose
             };
             (best_move, score, tree) = self.pvs_root_search(args);
         }
@@ -238,6 +240,7 @@ struct PvsRootSearchArgs<'a> {
     alpha: i32,
     beta: i32,
     build_tree: bool,
+    verbose: bool,
 }
 
 struct PvsSearchParams<'a> {
@@ -248,6 +251,7 @@ struct PvsSearchParams<'a> {
     beta: i32,
     config: &'a SearchConfig,
     build_tree: bool,
+    verbose: bool,
 }
 
 impl PvsSearcher {
@@ -291,6 +295,7 @@ impl PvsSearcher {
                 beta: -args.alpha,
                 config: args.config,
                 build_tree: args.build_tree,
+                verbose: args.verbose,
             };
             let (score, child_node) = self.alpha_beta(params);
             let score = -score;
@@ -347,6 +352,7 @@ impl PvsSearcher {
                     beta: -params.beta + 1,
                     config: params.config,
                     build_tree: false, // Never build tree for null moves
+                    verbose: params.verbose,
                 };
                 let (score, _) = self.pvs_search(null_move_params);
                 let score = -score;
@@ -393,7 +399,7 @@ impl PvsSearcher {
 
         if params.depth == 0 {
             let score = if params.config.use_quiescence_search {
-                self.quiescence_search(params.pos, params.alpha, params.beta, params.config)
+                self.quiescence_search(params.pos, params.alpha, params.beta, params.config, params.verbose)
             } else {
                 self.evaluate_with_cache(params.pos, params.config)
             };
@@ -407,7 +413,14 @@ impl PvsSearcher {
             let eval = self.evaluate_with_cache(params.pos, params.config);
             let margin = FUTILITY_MARGIN_PER_DEPTH[params.depth as usize];
             if eval + margin <= params.alpha {
-                let score = self.quiescence_search(params.pos, params.alpha, params.beta, params.config);
+                if params.verbose {
+                    let fen = shakmaty::fen::Fen::from_position(params.pos, EnPassantMode::Legal);
+                    println!(
+                        "[{}] Futility Pruning: eval ({}) + margin ({}) <= alpha ({}). FEN: {}",
+                        params.ply, eval, margin, params.alpha, fen
+                    );
+                }
+                let score = self.quiescence_search(params.pos, params.alpha, params.beta, params.config, params.verbose);
                 if let Some(node) = &mut current_node {
                     node.score = score;
                 }
@@ -421,6 +434,19 @@ impl PvsSearcher {
             let mut new_pos = params.pos.clone();
             new_pos.play_unchecked(m);
 
+            if params.verbose {
+                let san = SanPlus::from_move(params.pos.clone(), m);
+                let fen = shakmaty::fen::Fen::from_position(params.pos, EnPassantMode::Legal);
+                println!(
+                    "[{}] Evaluating move: {} ({}) alpha: {}, beta: {}. FEN: {}",
+                    params.ply,
+                    san,
+                    m,
+                    params.alpha,
+                    params.beta,
+                    fen
+                );
+            }
             let (score, child_node) = if i == 0 {
                  let next_params = PvsSearchParams {
                     pos: &new_pos,
@@ -430,6 +456,7 @@ impl PvsSearcher {
                     beta: -params.alpha,
                     config: params.config,
                     build_tree: params.build_tree,
+                    verbose: params.verbose,
                 };
                 let (s, cn) = self.pvs_search(next_params);
                 (-s, cn)
@@ -453,6 +480,7 @@ impl PvsSearcher {
                     beta: -params.alpha,
                     config: params.config,
                     build_tree: params.build_tree,
+                    verbose: params.verbose,
                 };
                 let (zw_score, child_node) = self.pvs_search(zw_params);
                 let zw_score = -zw_score;
@@ -466,6 +494,7 @@ impl PvsSearcher {
                         beta: -params.alpha,
                         config: params.config,
                         build_tree: params.build_tree,
+                        verbose: params.verbose,
                     };
                     let (s, cn) = self.pvs_search(next_params);
                     (-s, cn)
@@ -558,9 +587,9 @@ impl PvsSearcher {
         score
     }
 
-    fn quiescence_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn quiescence_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig, verbose: bool) -> i32 {
         if config.use_delta_pruning {
-            return self.delta_search(pos, alpha, beta, config);
+            return self.delta_search(pos, alpha, beta, config, verbose);
         }
 
         let standing_pat = self.evaluate_with_cache(pos, config);
@@ -587,9 +616,21 @@ impl PvsSearcher {
                 return 0;
             }
 
-            let score = -self.quiescence_search(&new_pos, -beta, -alpha, config);
+            if verbose {
+                let san = SanPlus::from_move(pos.clone(), m);
+                println!(
+                    "[quiescence] Evaluating capture: {} ({}) alpha: {}, beta: {}",
+                    san, m, alpha, beta
+                );
+            }
+
+            let score = -self.quiescence_search(&new_pos, -beta, -alpha, config, verbose);
 
             if score >= beta {
+                if verbose {
+                    let san = SanPlus::from_move(pos.clone(), m);
+                    println!("[quiescence] Beta cutoff on move {}: score ({}) >= beta ({}).", san, score, beta);
+                }
                 return beta;
             }
             if score > alpha {
@@ -599,7 +640,7 @@ impl PvsSearcher {
         alpha
     }
 
-    fn delta_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig) -> i32 {
+    fn delta_search(&self, pos: &Chess, mut alpha: i32, beta: i32, config: &SearchConfig, verbose: bool) -> i32 {
         let standing_pat = self.evaluate_with_cache(pos, config);
         if standing_pat >= beta {
             return beta;
@@ -611,6 +652,12 @@ impl PvsSearcher {
         if config.use_delta_pruning {
             let queen_value = evaluation::get_piece_value(shakmaty::Role::Queen);
             if standing_pat - queen_value >= beta {
+                if verbose {
+                    println!(
+                        "[delta] Delta Pruning: standing_pat ({}) - queen_value ({}) >= beta ({}).",
+                        standing_pat, queen_value, beta
+                    );
+                }
                 return beta;
             }
         }
@@ -624,7 +671,7 @@ impl PvsSearcher {
 
             let mut new_pos = pos.clone();
             new_pos.play_unchecked(m);
-            let score = -self.delta_search(&new_pos, -beta, -alpha, config);
+            let score = -self.delta_search(&new_pos, -beta, -alpha, config, verbose);
 
             if score >= beta {
                 return beta;
